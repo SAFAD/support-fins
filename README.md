@@ -56,6 +56,22 @@ Set **Nozzle** (0.2–2.0 mm) to your printer's nozzle and the support widths fo
 The contact tip and tines stay one line wide either way. See
 [the nozzle guide](docs/NOZZLE.md) for the sizes and what to check in the slicer.
 
+### Filament
+
+Set **Filament** (PLA / PETG / ABS / ASA / TPU, default PLA) in the Printer row. Every
+support number was tuned on PLA, and two filaments fail in ways a clearance can't fix:
+
+- **TPU** is ~100× softer, so a thin wall sways under the nozzle. Walls go to 4 lines,
+  the Support gap to 0.3 mm, and walls taller than ~43 mm (22 mm at 2 lines) get ribs at
+  the plate. TPU tines stretch rather than snap: cut them off flush.
+- **ABS / ASA** shrink as they cool and peel off the plate. Walls standing on the plate
+  get one-layer anti-warp ears at their ends, and the bed pad spreads 8 mm instead of 4.
+
+PETG gets its wider 0.3 mm gap. Picking a filament sets the Support gap (remembered per
+filament) and you can still change it; PLA builds exactly as before. These profiles are
+reasoned from the materials, **not print-tested yet** — see `docs/FIN-SPEC.md`
+("Filament profiles").
+
 ### Sway braces for tall parts
 
 **Full brace depth** is an optional checkbox under Sway. It starts off, keeping

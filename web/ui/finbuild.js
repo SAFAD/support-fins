@@ -18,7 +18,7 @@ import { updateReadout } from './readout.js';
 import {
   drawnTris, drawnMesh, drawMaterial, drawShown, clearPreview, rebuildDrawn,
 } from './walls.js';
-import { finsVisible, finMode, autoLike } from './settings.js';
+import { finsVisible, finMode, autoLike, material } from './settings.js';
 import { topology, rotM3, lastResult, updateFit } from './part.js';
 
 export let finMesh = null;
@@ -127,6 +127,8 @@ function finOpts() {
                        iface: PROP.iface,
                        // tine direction (#309): resin pins instead of the comb
                        tineDir: PROP.tineDir, pinDepth: PROP.pinDepth,
+                       // the filament's geometry: TPU's lower ribs, ABS's ears and pad
+                       material: material(),
                        nozzle, wallLines } };
 }
 

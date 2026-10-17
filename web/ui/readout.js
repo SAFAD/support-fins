@@ -4,7 +4,7 @@ import { t, tn } from './i18n.js';
  * grams receipt, and why a part got no fins.
  */
 import { PAD } from '../fins.js';
-import { PROP } from '../prop.js';
+import { PROP, tallH } from '../prop.js';
 import { el } from './dom.js';
 
 // Vertical tines are resin pins (#309, prop/pins.js): count them as what they are.
@@ -13,7 +13,7 @@ const tineCount = (n) => (pinsOn() ? tn('{n} pin', '{n} pins', n) : tn('{n} tine
 import { removedIds } from './remove.js';
 import { drawnWalls, drawMsg, selectedWall, selectedNote, drawShown, drawMaterial } from './walls.js';
 import {
-  finMode, finsVisible, materialDensity, syncSectionSums, autoLike,
+  finMode, finsVisible, materialDensity, syncSectionSums, autoLike, material,
 } from './settings.js';
 import { analysisTiming } from './part.js';
 import { ifaceMaterial } from './scene.js';
@@ -156,6 +156,34 @@ function ifaceNote() {
   return t('Interface material: no flat contacts here, so every support prints in one material');
 }
 
+const earCount = (n) => tn('{n} anti-warp ear', '{n} anti-warp ears', n);
+
+/**
+ * What the filament changed, when it is one of the two whose supports differ in shape
+ * (materials.js): TPU's walls are ribbed from lower down and its tines don't snap; ABS
+ * and ASA get ears and a wider pad. `walls`: there are walls to say it about.
+ * Returns { lead, help }: lead is must-see (the ribs a soft wall needs are turned off).
+ */
+function filamentNotes(walls) {
+  const lead = [], help = [];
+  if (!walls) return { lead, help };
+  const m = material();
+  if (m === 'tpu') {
+    const mm = Math.round(tallH());
+    if (el('tall-ribs').checked) {
+      help.push(t('TPU is soft, so walls taller than {mm} mm get ribs at the plate to keep them from swaying under the nozzle.', { mm }));
+    } else {
+      lead.push(t('Brace tall walls is off: TPU walls taller than {mm} mm may sway as they print', { mm }));
+    }
+    if (el('tines').checked && !pinsOn()) {
+      help.push(t('TPU tines stretch instead of snapping: cut them flush with side cutters.'));
+    }
+  } else if (m === 'abs') {
+    help.push(t('ABS and ASA shrink as they cool: the ears at the walls’ ends hold them to the plate, and the bed pad spreads wider. An enclosure helps most.'));
+  }
+  return { lead, help };
+}
+
 /**
  * Two audiences, two homes. `lead` is the short, must-see stuff -- a support that
  * couldn't build, a part balanced on a point -- and stays in the status panel.
@@ -189,8 +217,12 @@ function updateDrawReadout(built, ms) {
   const braces = ok.filter((w) => w.kind === 'sway').length;
   const walls = ok.length - braces;
   const ribs = ok.reduce((a, w) => a + (w.kind === 'sway' ? 0 : w.info?.braces ?? 0), 0);
+  const ears = ok.reduce((a, w) => a + (w.kind === 'sway' ? 0 : w.info?.ears ?? 0), 0);
   const parts = [];
-  if (walls) parts.push(tn('{n} drawn wall', '{n} drawn walls', walls) + (ribs ? ` · ${tn('{n} wall rib', '{n} wall ribs', ribs)}` : ''));
+  if (walls) {
+    parts.push(tn('{n} drawn wall', '{n} drawn walls', walls) + (ribs ? ` · ${tn('{n} wall rib', '{n} wall ribs', ribs)}` : '')
+      + (ears ? ` · ${earCount(ears)}` : ''));
+  }
   if (braces) parts.push(tn('{n} sway brace', '{n} sway braces', braces));
   box.textContent = ok.length
     ? parts.join(' + ') + (tines ? ` · ${tineCount(tines)}` : '')
@@ -204,7 +236,8 @@ function updateDrawReadout(built, ms) {
       + 'draw it, red faces included) to lay a breakaway wall under it'));
   }
   if (ok.length) {
-    help.push(tines
+    // (TPU's tines don't snap: filamentNotes says what to do instead)
+    if (!tines || pinsOn() || material() !== 'tpu') help.push(tines
       ? (pinsOn() ? t('The pins attach each wall to the part, as a resin print needs.')
         : t('The tines grab onto the part and bend away when you snap the wall off.'))
       : t('Each wall stops a hair under the part (0.2mm) so it snaps off clean. Turn '
@@ -236,6 +269,9 @@ function updateDrawReadout(built, ms) {
       : t('this part balances on one point. Turn the bed pad on to seat it, or rotate until it sits down'));
   }
   if (built && padNote(built)) lead.push(padNote(built));
+  const fil = filamentNotes(walls);
+  lead.push(...fil.lead);
+  help.push(...fil.help);
   const iface = ifaceNote();
   if (iface) lead.push(iface);
   setFinNote(lead, help);
@@ -316,7 +352,8 @@ function updateFinReadout(built, ms) {
   const removedN = removedIds.size;
   const removedTxt = removedN ? ` (${t('{n} removed', { n: removedN })})` : '';
   const sw = built.sway;
-  const ribTxt = built.tallRibs ? ` · ${tn('{n} wall rib', '{n} wall ribs', built.tallRibs)}` : '';
+  const ribTxt = (built.tallRibs ? ` · ${tn('{n} wall rib', '{n} wall ribs', built.tallRibs)}` : '')
+    + (built.ears ? ` · ${earCount(built.ears)}` : '');
   const swayTxt = sw?.count
     ? `${autoTxt || drawnTxt ? ' + ' : ''}${tn('{n} sway brace', '{n} sway braces', sw.count)}`
       + (sw.tines ? ` · ${t('{n} brace tines', { n: sw.tines })}` : '')
@@ -337,7 +374,8 @@ function updateFinReadout(built, ms) {
       // Make "why no tines" legible: props never take tines, only the gripping
       // fins do, so a part that gets only props shows no tines and that's correct.
       const b = built.braceCount, p = built.propCount;
-      if (b) {
+      // (TPU's tines don't snap: filamentNotes says what to do instead)
+      if (b && (!built.tines || pinsOn() || material() !== 'tpu')) {
         help.push(built.tines
           ? (pinsOn() ? t('The pins attach each wall to the part, as a resin print needs.')
             : t('The tines grab onto the part and bend away when you snap the supports off.'))
@@ -451,6 +489,9 @@ function updateFinReadout(built, ms) {
       }
     }
   }
+  const fil = filamentNotes(n || drawnOk);
+  lead.push(...fil.lead);
+  help.push(...fil.help);
   const iface = ifaceNote();
   if (iface) lead.push(iface);
   setFinNote(lead, help);

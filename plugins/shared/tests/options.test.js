@@ -50,6 +50,7 @@ const SITE_EXCLUDED = {
   'iface': 'a third 3MF object for a second material; the plugins hand the host one body',
   'wall-lines': 'site first, with the nozzle; the plugins build 2-line walls (web/nozzle.js)',
   'nozzle': 'site first; the plugins build at 0.4 until their dialogs take it (web/nozzle.js)',
+  'material': 'site first; the plugins build PLA geometry until their dialogs take it (web/materials.js): a host passes gap 0.3 for PETG or TPU',
   'curved-walls': 'site first, off by default: the plugins build without it until the print test (web/prop/curved.js)',
 };
 

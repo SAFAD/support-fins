@@ -1,7 +1,7 @@
 import { t } from './i18n.js';
 /**
  * The options panel: support mode, the fins / "+ Add" toggles, bed pad style,
- * tines, sway braces, gap, cutouts, material profile, and the collapsible
+ * tines, sway braces, gap, cutouts, filament, and the collapsible
  * sections with their one-line recaps. Owns finsVisible / finMode / drawAugment.
  */
 import { applyTunables, FIN, PAD } from '../fins.js';
@@ -242,9 +242,64 @@ el('iface').addEventListener('change', () => {
   refreshFins();
 });
 
-// The grams receipt's filament density: PLA's (../materials.js). The PLA/PETG
-// dropdown is gone -- PETG's wider gap is the Support gap field's to set.
-export const materialDensity = MATERIAL.pla.density;
+// Filament (../materials.js): what this part prints in. PETG and TPU weld to a support
+// harder, so picking one sets a wider Support gap; TPU's walls are soft (Wall lines up
+// to 4 and ribs from lower down, prop/brace.js), ABS's and ASA's shrink (anti-warp ears
+// and a wider pad, prop/ears.js). Those last two have no field: this page's engine copy
+// is set here for Draw, and the Worker gets `material` in the build's tunables.
+// The filament is remembered across visits, like the nozzle, and a saved session keeps
+// its own (history.js). The Support gap is remembered PER filament -- you tune each
+// once -- and PLA keeps the key every earlier visit stored it under.
+const MATERIAL_KEY = 'sf.material';
+try {
+  const saved = localStorage.getItem(MATERIAL_KEY);
+  if (Object.hasOwn(MATERIAL, saved ?? '')) el('material').value = saved;
+} catch { /* storage off */ }
+/** The filament picked (a MATERIAL key). */
+export const material = () => (Object.hasOwn(MATERIAL, el('material').value) ? el('material').value : 'pla');
+const gapKey = (m) => (m === 'pla' ? 'sf.gap' : `sf.gap.${m}`);
+/** The Support gap last set for filament `m`, or its profile's. */
+function savedGap(m) {
+  const f = el('gap');
+  try {
+    const v = Number(localStorage.getItem(gapKey(m)) ?? NaN);
+    if (Number.isFinite(v) && v >= Number(f.min) && v <= Number(f.max)) return v;
+  } catch { /* storage off */ }
+  return MATERIAL[m].propGap;
+}
+// The grams receipt's filament density.
+export let materialDensity = MATERIAL.pla.density;
+/** The filament's numbers into this page's engine state: the pad (Sure hold's thickness
+ *  and tack, which the build request sends), the density, and the geometry no field
+ *  shows (fins.js applyTunables). The Support gap and Wall lines are their fields'. */
+function applyMaterial() {
+  const m = MATERIAL[material()];
+  materialDensity = m.density;
+  FIN.padH = m.padH;
+  PAD.grab = m.padGrab;
+  applyTunables({ material: material() });
+}
+/** The filament's Wall lines (TPU's 4), only ever UP: a thicker wall picked for a tall
+ *  part stays when the filament changes. Written, not dispatched (see below). */
+function presetWallLines() {
+  const lines = MATERIAL[material()].wallLines;
+  if (lines && Number(el('wall-lines').value) < lines && wallLinesFit(lines)) {
+    el('wall-lines').value = String(lines);
+    applyWallLines(lines);
+  }
+}
+el('material').addEventListener('change', () => {
+  const m = material();
+  try { localStorage.setItem(MATERIAL_KEY, m); } catch { /* storage off */ }
+  // The fields the filament presets are written, not dispatched: their own 'change'
+  // would record a second undo step. history.js reads the form after this handler.
+  el('gap').value = String(savedGap(m));
+  PROP.gap = Math.min(0.4, Math.max(0.1, el('gap').valueAsNumber));
+  presetWallLines();
+  applyMaterial();
+  syncSectionSums();
+  refreshFins();
+});
 
 // Nozzle size scales the support widths (../nozzle.js); this page's copy is set
 // here for Draw, and the Worker gets it in the build's tunables. It is the
@@ -264,19 +319,22 @@ el('nozzle').addEventListener('change', () => {
 });
 
 // Layer height and Support gap are remembered across visits too (local issue 42): you
-// slice at one layer height and tune one gap for your machine, so a new part starts
-// from your last ones. Unlike the nozzle, a saved session still restores its own
-// (history.js). Read back before initSettings, which hands the gap to PROP.
-const PRINTER_KEYS = { 'layer-height': 'sf.layerHeight', gap: 'sf.gap' };
+// slice at one layer height and tune one gap for your machine (one per filament), so a
+// new part starts from your last ones. Unlike the nozzle, a saved session still
+// restores its own (history.js). Read back before initSettings, which hands the gap to PROP.
+const PRINTER_KEYS = { 'layer-height': () => 'sf.layerHeight', gap: () => gapKey(material()) };
+el('gap').value = String(savedGap(material()));
 for (const [id, key] of Object.entries(PRINTER_KEYS)) {
   const f = el(id);
-  try {
-    const v = Number(localStorage.getItem(key) ?? NaN);
-    if (Number.isFinite(v) && v >= Number(f.min) && v <= Number(f.max)) f.value = String(v);
-  } catch { /* storage off */ }
+  if (id !== 'gap') {
+    try {
+      const v = Number(localStorage.getItem(key()) ?? NaN);
+      if (Number.isFinite(v) && v >= Number(f.min) && v <= Number(f.max)) f.value = String(v);
+    } catch { /* storage off */ }
+  }
   f.addEventListener('change', () => {
     if (!Number.isFinite(f.valueAsNumber)) return;
-    try { localStorage.setItem(key, f.value); } catch { /* storage off */ }
+    try { localStorage.setItem(key(), f.value); } catch { /* storage off */ }
   });
 }
 
@@ -354,6 +412,7 @@ export function syncSectionSums() {
   // The printer line names only what the build reads: layer height drops out
   // while it's hidden (tines off, a pad that doesn't read it).
   el('sum-printer').textContent = [
+    el('material').selectedOptions[0]?.textContent ?? 'PLA',
     `${el('nozzle').value} ${t('nozzle')}`,
     el('layerh-fld').hidden ? null : `${el('layer-height').value} ${t('layers')}`,
     `${el('gap').value} ${t('gap')}`,
@@ -395,7 +454,7 @@ el('augment-toggle').addEventListener('click', () => {
   refreshFins();
 });
 
-/** Bring the pad, tine, sway, cutout and nozzle state in line with the controls
+/** Bring the filament, pad, tine, sway, cutout and nozzle state in line with the controls
  *  (a reload can keep the browser's last values). Called once at startup. */
 export function initSettings() {
   syncTineGrip();
@@ -404,11 +463,13 @@ export function initSettings() {
   CUT.pattern = el('cutout').value;   // a reload can keep the browser's last pick
   PROP.iface = ifaceMode();
   applyTunables(tineDirTunables());   // ...and its last tine direction and pin depth (#309)
+  applyMaterial();                    // ...and its last filament
   const gap = el('gap').valueAsNumber;   // ...and its last Support gap (wireGap's range)
   if (Number.isFinite(gap)) PROP.gap = Math.min(0.4, Math.max(0.1, gap));
   applyNozzle(Number(el('nozzle').value));   // ...and the widths to the remembered nozzle
   applyWallLines(Number(el('wall-lines').value));
   fitWallLines();
+  presetWallLines();   // a remembered TPU starts at its 4 lines, as picking it does
 }
 
 window.addEventListener('languagechange', () => { syncCoverageUI(); if (typeof syncSectionSums === "function") syncSectionSums(); el('fins-toggle').textContent = finsVisible ? t('Fins on') : t('Add fins'); el('augment-toggle').textContent = drawAugment ? t('Done adding walls') : t('+ Add walls by hand'); });

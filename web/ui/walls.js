@@ -290,7 +290,8 @@ function updatePreview(hitPoint) {
     if (ghostMesh) { scene.remove(ghostMesh); ghostMesh.geometry.dispose(); ghostMesh = null; }
     const tris = partPrintTriangles();
     const r = drawnWall([q[0].x, q[0].y, q[0].z], [q[1].x, q[1].y, q[1].z], tris, 0,
-                        { braceTall: el('tall-ribs').checked });   // the ghost shows its ribs
+                        { braceTall: el('tall-ribs').checked,   // the ghost shows its ribs
+                          layerHeight: el('layer-height').valueAsNumber });   // ...and ABS's ears
     if (r.ok) { ghostMesh = meshFrom(r.tris, ghostMaterial); ghostMesh?.layers.disable(MODEL); }
   });
 }

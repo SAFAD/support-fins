@@ -29,8 +29,9 @@ let redoStack = [];
 // EVERY SETTING is undoable too (Matthew: "every action should be redo-able"). The
 // fields' own handlers apply them, so a restore writes the values back and fires the
 // same events a hand edit would. Not the build volume: that is the printer, saved
-// across visits, not an edit to this part.
-const FORM_IDS = ['nozzle', 'thr', 'tines', 'tine-density', 'tine-dir', 'pin-depth', 'layer-height', 'gap',
+// across visits, not an edit to this part. The filament first: picking one rewrites
+// the Support gap and Wall lines (settings.js), so theirs are restored after it.
+const FORM_IDS = ['material', 'nozzle', 'thr', 'tines', 'tine-density', 'tine-dir', 'pin-depth', 'layer-height', 'gap',
   'bed-pad', 'pad-h', 'pad-gap', 'pad-grip', 'pad-margin', 'sway', 'sway-from',
   'sway-spacing', 'sway-depth', 'full-brace-depth', 'wall-lines', 'cutout', 'iface', 'coverage', 'plate-only', 'long-walls', 'tall-ribs', 'curved-walls', 'highlight-small', 'show-layers',
   'show-rings', 'nav-preset'];
