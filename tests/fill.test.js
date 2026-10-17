@@ -7,7 +7,7 @@
 import { loadModel, analyze, fins, insideCount, rotX, tiltedBlockTopo, assert } from './_util.js';
 
 const { classify, reachOf, MUST, PLATE_Z } = await import('../web/fins/coverage.js');
-const { fillReach, FILL } = await import('../web/fins/fill.js');
+const { budgetScale, fillReach, FILL } = await import('../web/fins/fill.js');
 
 const OPTS = { bedPad: true, tines: true, tineDensity: 0, layerHeight: 0.2 };
 
@@ -108,14 +108,26 @@ Deno.test('fill: deterministic -- the same build twice', () => {
 });
 
 Deno.test('fill: a cap stops it and says so', () => {
-  const keep = FILL.maxWalls;
+  const keep = FILL.maxWalls, scale = FILL.maxScale;
   FILL.maxWalls = 1;
+  FILL.maxScale = 1;   // the cap as set, not grown with the red (budgetScale)
   try {
     const f = fins.buildFins(topo, res, rot, { ...OPTS, mode: 'full' });
     assert(f.fill.walls === 1 && f.fill.capped, `walls ${f.fill.walls}, capped ${f.fill.capped}`);
     assert(f.fill.unservedArea > 0, 'the red the cap left is reported');
-  } finally { FILL.maxWalls = keep; }
+  } finally { FILL.maxWalls = keep; FILL.maxScale = scale; }
   assert(!full.fill.capped, 'uncapped at the defaults');
+});
+
+Deno.test('fill: the caps grow with the red there is to hold (budgetScale)', () => {
+  assert(budgetScale(0) === 1 && budgetScale(FILL.maxWalls * FILL.perWall) === 1, 'up to 600 mm2: the caps as set');
+  assert(budgetScale(2 * FILL.maxWalls * FILL.perWall) === 2 && budgetScale(1e6) === FILL.maxScale, 'then with the red, to maxScale');
+  // a cylinder lying on its side starts with ~1250 mm2 bare: 40 walls stopped it with 29 mm2 left
+  const topo = loadModel('cylinder'), rot = rotX(90), res = analyze(topo, 45, rot);
+  const b = fins.buildFins(topo, res, rot, { ...OPTS, mode: 'full' });
+  assert(b.fill.bareBefore > FILL.maxWalls * FILL.perWall, `starts with ${b.fill.bareBefore.toFixed(0)} mm2`);
+  assert(b.fill.walls > FILL.maxWalls && !b.fill.capped, `walls ${b.fill.walls}, capped ${b.fill.capped}`);
+  assert(b.fill.unservedArea < 10, `bare after: ${b.fill.unservedArea.toFixed(1)} mm2`);
 });
 
 Deno.test('fill: Auto mode never runs the fill', () => {

@@ -43,7 +43,7 @@
  * every support already built (fused walls don't break away) -- from its floor up:
  * a wall on the part (a chin over the chest) has no plate foot to keep clear. FILL.maxWalls,
  * maxTries and maxChecks bound the work -- counts, not a clock, so the output is the same
- * on every machine. Red no wall can reach is returned (`unserved`), never hidden:
+ * on every machine -- and grow with the red there is to hold (budgetScale). Red no wall can reach is returned (`unserved`), never hidden:
  * quality first, surface the dropped overhang.
  */
 import { drawnLine, drawnWall, DRAW_MIN_LEN } from '../draw.js';
@@ -73,7 +73,18 @@ export const FILL = {
   maxTries: 120,     // drawnWall calls, kept or not
   groupTries: 12,     // drawnWall calls one group gets before its red is given up on
   maxChecks: 2000,   // line checks (underStretch, then settledStretch; both gridded), built or not
+  // The three caps above are for a part whose bare red is up to maxWalls x perWall
+  // (600 mm2); past that they grow with it, up to maxScale x. A fill wall holds
+  // 17-26 mm2 of the red it starts from (sphere, torus, cylinder, needle, the 6R0
+  // housing: 20 on its side), so 40 walls ran out at ~800 mm2 and stopped with red
+  // still bare -- every pose of that housing, tube X60/X90, torus flat/Y35, cylinder
+  // X90. 15 leaves headroom. A run that wasn't capped never reaches them: unchanged.
+  perWall: 15,
+  maxScale: 2.5,
 };
+
+/** How many times FILL's caps a fill starting from `area` mm2 of bare red gets. */
+export const budgetScale = (area) => Math.min(FILL.maxScale, Math.max(1, area / (FILL.maxWalls * FILL.perWall)));
 
 /** The reach the slider asks for: R(0.5) = 6 mm (the held rule), R(1) = denseReach. */
 export function fillReach(coverage) {
@@ -614,7 +625,11 @@ function fillOnce(topo, result, rot, opts, built) {
   const floors = [];               // each kept wall's bottom z per station (drawnWall), for the braces
   const dead = new Set();          // points no line could serve
   const bare = (p) => !dead.has(p) && !near(p[0], p[1], p[2]);
-  const full = () => stats.walls >= FILL.maxWalls || stats.tries >= FILL.maxTries || stats.checks >= FILL.maxChecks;
+  // the caps, grown with the red there is to hold (budgetScale)
+  const k = budgetScale(stats.startArea);
+  const maxWalls = Math.round(FILL.maxWalls * k), maxTries = Math.round(FILL.maxTries * k);
+  const maxChecks = Math.round(FILL.maxChecks * k);
+  const full = () => stats.walls >= maxWalls || stats.tries >= maxTries || stats.checks >= maxChecks;
   const CAP = 'cap';               // wallFor stopped on a cap: give up on nothing
   // a built wall goes in: its triangles, its tops into the reach set, its record
   const keep = (r, joined = false) => {
@@ -744,7 +759,7 @@ function fillOnce(topo, result, rot, opts, built) {
       for (const p of pts) { w += p[3]; x += p[0] * p[3]; y += p[1] * p[3]; }
       const r = rowWalls({ pts, heading: field(x / w, y / w) ?? 0, R, tris, drawOpts, minGain: FILL.minGain,
         fits: (t) => !others.hits(t.tris, PROP.sideClear, true), keep: (t) => keep(t),
-        room: () => stats.walls < FILL.maxWalls, nFaces: topo.nFaces });
+        room: () => stats.walls < maxWalls, nFaces: topo.nFaces });
       stats.rows = r.walls;
       stats.rowBuilds = r.builds;
     }
