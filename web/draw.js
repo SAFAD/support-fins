@@ -16,7 +16,7 @@
  * into a watertight wall, reusing prop/sweep.js's proven `sweep` and its three
  * line-settling passes verbatim.
  */
-import { PROP, PART_BAND, footFor, surfaceZsAt as gridZsAt, surfaceHitsAt as gridHitsAt, sweep, sweepBetween, sweepSquat, braceWall, floorLine, moldLine, contourTop, lowerSag, settleTop, emitTines, tineStepFor, crestOn, crestPart } from './prop.js';
+import { PROP, PART_BAND, footFor, surfaceZsAt as gridZsAt, surfaceHitsAt as gridHitsAt, sweep, sweepBetween, sweepSquat, braceWall, earWall, floorLine, moldLine, contourTop, lowerSag, settleTop, emitTines, tineStepFor, crestOn, crestPart } from './prop.js';
 
 /**
  * A hand-drawn wall may be much shorter than an auto wall (PROP.minSpan, 7 mm): the user
@@ -173,6 +173,9 @@ export function drawnLine(a, b, tris, step = PROP.stationStep, band = Infinity, 
  *   over BRACE.tallH gets face ribs along it (the Brace tall walls box), each kept
  *   clear of other supports by `opts.braceClear(tris)` when given. `floors`: each station's
  *   bottom z, for a caller that braces later (the fill pass, once every wall is in).
+ * A filament that shrinks (EARS.r, ABS) gets anti-warp ears at the wall's plate ends
+ *   (prop/ears.js; `ears` counts them, absent with none), kept clear by `braceClear` too.
+ *   `opts.under` (the fill pass) never gets them here: Auto ears its walls at the end.
  * or `{ ok: false, reason }` with a message the UI can show -- a hand-drawn wall
  * that can't be built should say WHY (too short, at the plate) rather than
  * silently doing nothing, the failure mode M5's scoreboard was built on.
@@ -199,6 +202,11 @@ export function drawnWall(a, b, tris, zBed = 0, opts = {}) {
   const withBraces = (line, floorZ) => opts.brace || opts.braceTall
     ? braceWall(line, floorZ, tris, zBed, out, opts.braceClear, { slim: !!opts.brace, tall: !!opts.braceTall })
     : 0;
+  // after the braces, so an ear keeps clear of them; `{ ears }` only when some were built
+  const withEars = (line, floorZ) => {
+    const n = opts.under ? 0 : earWall(line, floorZ, tris, zBed, out, opts.braceClear, opts.layerHeight ?? PROP.tineH);
+    return n ? { ears: n } : {};
+  };
   // PART-ATTACHED first: if solid part sits below the overhang, the support
   // stands on THAT, not the plate. Probe with a BANDED top contour so the
   // overhang isn't settled down onto the very floor we're looking for; floorLine
@@ -232,8 +240,9 @@ export function drawnWall(a, b, tris, zBed = 0, opts = {}) {
       // a station whose floor is open air runs down to the plate (floorLine's 0): with
       // no flange there, it is the one that most needs a brace (Isaac's hands)
       const braces = withBraces(topPA, (i) => floor[i][2]);
+      const ears = withEars(topPA, (i) => floor[i][2]);
       const tines = withTines(topPA);
-      return { ok: true, tris: out, length: len, height, partAttached: true, tines, braces, top: topPA,
+      return { ok: true, tris: out, length: len, height, partAttached: true, tines, braces, ...ears, top: topPA,
                floors: floor.map((f) => f[2]) };
     }
   }
@@ -274,8 +283,9 @@ export function drawnWall(a, b, tris, zBed = 0, opts = {}) {
     const squat = squatWall(topPA, line, tris, zBed, !!opts.plateOnly);
     if (squat) {
       out.push(...squat.tris);
+      const ears = squat.partAttached ? {} : withEars(squat.top, () => zBed);
       const tines = withTines(squat.top, squat.partAttached ? undefined : PROP.squatBrimH);
-      return { ok: true, tris: out, length: len, height: squat.height, partAttached: squat.partAttached, squat: true, tines, top: squat.top };
+      return { ok: true, tris: out, length: len, height: squat.height, partAttached: squat.partAttached, squat: true, tines, ...ears, top: squat.top };
     }
     const clickTop = Math.min(a[2], b[2]) - zBed;
     if (clickTop >= PROP.minHeight + PROP.gap) {
@@ -288,8 +298,9 @@ export function drawnWall(a, b, tris, zBed = 0, opts = {}) {
   let height = 0;
   for (const p of line) height = Math.max(height, p[2] - PROP.gap - zBed);
   const braces = withBraces(line, () => zBed);
+  const ears = withEars(line, () => zBed);
   const tines = withTines(line);
-  return { ok: true, tris: out, length: len, height, tines, braces, top: line, floors: line.map(() => zBed) };
+  return { ok: true, tris: out, length: len, height, tines, braces, ...ears, top: line, floors: line.map(() => zBed) };
 }
 
 /**

@@ -34,6 +34,7 @@
  *   crest.js      the interface crest: a wall's top band as its own tagged solid
  *   sweep.js      the wall solid: the upside-down T, and a part-attached wall
  *   brace.js      ribs at the plate for a short wall that stands tall (the fill pass's)
+ *   ears.js       one-layer anti-warp discs at a plate wall's ends (ABS / ASA)
  *   ties.js       zigzag struts tying two neighbouring walls into one frame (the fill pass's)
  *   clearance.js  which stations can carry a wall (reach, certification, runs)
  *   tines.js      the grip comb along a wall's top
@@ -71,7 +72,8 @@ export { PROP } from './prop/config.js';
 export { splitRegion, tubeLine, patchTracks } from './prop/tracks.js';
 export { straightness, contactLine, lowerSag, contourTop, settleTop } from './prop/contact.js';
 export { footFor, profileHalf, sweep, sweepBetween } from './prop/sweep.js';
-export { BRACE, braceWall } from './prop/brace.js';
+export { BRACE, braceWall, ribScale, tallH } from './prop/brace.js';
+export { EARS, earWall } from './prop/ears.js';
 export { TIE, tieWalls } from './prop/ties.js';
 export { surfaceHitsAt, surfaceZAt, surfaceZsAt } from './prop/surface.js';
 export { stationIsClear, stationCertified, pathToPlateIsClear, longestRun,

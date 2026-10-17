@@ -40,7 +40,26 @@ export const BRACE = {
   step: 0.25,                  // mm: part clearance sampled this finely under a rib
   tallH: 100,                  // mm: a wall taller than this gets face ribs at any length (kinds.tall; tall/ coupon)
   faceStep: 30,                // mm: one pair of face ribs per this much wall length
+  // The filament's Young's modulus against PLA's (materials.js `stiffness`), which the
+  // two rules above were set on. 1 for PLA, PETG and ABS; TPU's 0.01 ribs its walls
+  // where a PLA wall that bends as far would be ribbed (ribScale).
+  stiffness: 1,
 };
+
+// The tuned two-line 0.4 wall, before nozzle.js scales PROP.th.
+const TH_REF = PROP.th;
+
+/**
+ * The share of BRACE.tallH and BRACE.aspect a wall is ribbed at, for the filament
+ * and wall thickness: 1 for PLA at any thickness, so those builds are unchanged.
+ * A wall's sway under the nozzle's drag goes as height^3 / (E th^3): one as soft as
+ * TPU bends as far as the 10 cm PLA wall at cbrt(stiffness) x (th / 1.0) of its
+ * height -- 22 mm at two lines, 43 mm at four. Never above 1: a thicker PLA wall
+ * keeps the printed rule (Wall lines don't move the ribs).
+ */
+export const ribScale = () => Math.min(1, Math.cbrt(Math.max(1e-6, BRACE.stiffness)) * PROP.th / TH_REF);
+/** BRACE.tallH for this filament and wall (ribScale). */
+export const tallH = () => BRACE.tallH * ribScale();
 
 /** Does part surface come within sideClear of the box u0..u1 x -w..w x z0..z1(u)
  *  (rib frame: u out from the stem, v across it)? */
@@ -97,7 +116,8 @@ export function braceWall(top, floorZ, tris, zBed, out, clear = () => true, kind
   if (len < 1e-6) return 0;
   let height = 0;
   for (let i = 0; i < n; i++) height = Math.max(height, top[i][2] - PROP.gap - floorZ(i));
-  const slim = !!kinds.slim && height > BRACE.aspect * len, tall = !!kinds.tall && height > BRACE.tallH;
+  const k = ribScale();
+  const slim = !!kinds.slim && height > BRACE.aspect * k * len, tall = !!kinds.tall && height > BRACE.tallH * k;
   if (!slim && !tall) return 0;
   const dx = (b[0] - a[0]) / len, dy = (b[1] - a[1]) / len;
   const reach0 = PROP.footRatio * height;

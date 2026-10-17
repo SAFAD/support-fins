@@ -298,7 +298,7 @@ set the numbers.
 
 | feature | value | rationale |
 |---|---|---|
-| when | plate walls over `BRACE.tallH` (**100 mm**), Auto, Full and Draw; the **Brace tall walls** box, on by default | the reporter's 10 cm, until the coupon prints |
+| when | plate walls over `BRACE.tallH` (**100 mm**; lower for TPU, see "Filament profiles"), Auto, Full and Draw; the **Brace tall walls** box, on by default | the reporter's 10 cm, until the coupon prints |
 | where | a pair, one off each face, every `BRACE.faceStep` (**30 mm**) of wall length, at the middle of each share; never off the ends | a long wall is stiff along its line; across it, it is a sheet |
 | reach / rise / flange | the Wall ribs': `footRatio` × height (halved while blocked, ≥ 1.5 mm), **50 %** of the height, `footMin` flange | one rib shape; R50 vs R80 is on the coupon |
 | order | last: after every wall, wedge, fill wall and sway brace | ribs built as walls went in took plate the next walls needed (the fill pass's lesson) |
@@ -451,3 +451,57 @@ issue 044), so its shoulder never leans flatter either; a step under half a line
 prints at any angle and is left alone. 2 lines is the tuned wall, unchanged. A thicker wall fits fewer places: on a tight part some
 overhangs lose their wall, and the readout reports them. It is a setting of the part
 (undoable, saved with a session), not the printer. The plugins build 2 lines.
+
+## Filament profiles — `web/materials.js`
+
+**Not printed yet.** Every number above was tuned on PLA (PETG's gap and pad on one
+PETG print; ASA's sway braces printed fine on PLA's numbers). Two filaments fail in
+ways no clearance fixes, so the Printer row's **Filament** (PLA / PETG / ABS / ASA /
+TPU, default PLA) also changes the geometry for them. PLA and PETG build exactly as
+with no filament at all (`tests/filament.test.js`; the sweep's 621 meshes are
+byte-identical), and the plugins build PLA's geometry until their dialogs take it.
+
+Picking a filament sets the **Support gap** (remembered per filament: you tune each
+once) and, for TPU, raises **Wall lines** to 4 (never lowers it). The rest has no field:
+
+| filament | gap | geometry | why |
+|---|---|---|---|
+| PLA | 0.2 | as tuned | the reference |
+| PETG | 0.3 | pad 0.3 mm, a 0.1 mm gap under Sure hold | welds to a support harder (the old PETG profile) |
+| ABS / ASA | 0.2 | **anti-warp ears**; the pad spreads **8 mm** (`padMargin`, 4 for the rest) | shrinks ~0.7-0.8% (ASA ~0.5%), two to three times PLA, so a thin wall foot peels from its ends and a part on a small foot lifts. ASA released clean at PLA's gap (sway braces, 2026-09-22) |
+| TPU | 0.3 | 4 wall lines; **ribs from `cbrt(stiffness)` × the wall's thickness of `tallH`**; PETG's pad | ~100× softer than PLA, so its walls sway under the nozzle; welds to itself harder |
+
+**Ribs on a soft wall** (`ribScale` in `web/prop/brace.js`). A wall's sway under the
+nozzle's drag goes as `height³ / (E · th³)`, so a TPU wall bends as far as the 10 cm PLA
+wall the tall-wall rule ribs at `cbrt(E_TPU / E_PLA) × (th / 1.0)` of its height. TPU 95A
+datasheets give Young's moduli of 9–67 MPa (Bambu 9.2, Ultimaker 67), PLA 2.2–3.3 GPa:
+`stiffness` 0.01 (cube root 0.22) sits inside that. So its walls are ribbed from **22 mm**
+at 2 lines and **43 mm** at 4, and Full coverage's slim rule (`BRACE.aspect`, 6× the
+length) scales the same way. The rib itself is the tall-wall rib, unchanged (50 % rise,
+plate stations only, `sideClear` off the part and every support). PETG and ABS are within
+2× of PLA's modulus, inside the 10 cm rule's own uncertainty (one report), so they keep
+it; the scale never goes above 1, so Wall lines never move a PLA wall's ribs. Four lines
+are 8× as stiff across the wall as two and need no ribs to 43 mm, at the cost of plastic
+and of some walls that no longer fit (on the part this was written for: one wall fewer and
+one more overhang bare, against PLA's 2 lines). The threshold is the edge the PLA rule was set at,
+not a margin: a print or the tall/ coupon in TPU should set it. **TPU tines stretch
+instead of snapping** -- they still hold the part, but come off with side cutters; the
+readout says so.
+
+**Ears** (`web/prop/ears.js`, Auto's pass `web/fins/ears.js`, Draw's walls in `draw.js`).
+A slicer's mouse ears: a disc at each end of a wall that stands on the plate there,
+where a shrinking strip starts to peel.
+
+| feature | value | rationale |
+|---|---|---|
+| radius | **5 mm** (`EARS.r`), retried at 2.5 when blocked, then dropped | a 10 mm disc, the usual ear; under half the 12 mm row pitch past a 3 mm foot |
+| height | **one layer** (the Layer height field) | like the Light pad: only the first layer grips the plate, more only welds harder to the wall |
+| where | centred on the wall's end station, only where its floor is the plate | a wall on the part doesn't peel off the plate |
+| clearance | `sideClear` (0.35) off the part beside it, the support gap over it; `sideClear` off every other support and the pad | an ear fused to another support or the part no longer breaks away by itself |
+| order | last, after the tall-wall ribs | ears keep clear of the ribs, not the ribs of the ears |
+| removal | an ear joins its wall's triangle ranges | removing a wall removes its ears |
+
+Ears add ~15 ms a build on the stress set (22 models × 4 poses: 239 ears, every one a
+closed, outward-wound disc outside the part). On the part this was written for (a
+124 mm housing on a 51 mm² curved foot) 11 of its 18 plate wall ends got one: the rest
+stand too close to where the part meets the plate.

@@ -30,19 +30,22 @@
  *                 reach rule that holds it -- shared with the coverage scoreboard
  *   fill.js       Full coverage: Draw-built walls under the red Auto left bare
  *   tall.js       face ribs on walls over BRACE.tallH, last, around everything placed
+ *   ears.js       anti-warp discs at the plate ends of every wall (ABS / ASA), after the ribs
  *   downhill.js   downhill walls kept only if the whole build is no worse (#25)
  *
  * Each module imports only modules above it in this list and never fins.js.
  */
 import { floatingPieces } from './pieces.js';
 import { findWallPatches } from './planes.js';
-import { buildProps, crestOn, crestPart, noProps, PROP } from './prop.js';
+import { BRACE, buildProps, crestOn, crestPart, EARS, noProps, PROP } from './prop.js';
+import { MATERIAL } from './materials.js';
 import { buildSwayBraces } from './sway.js';
 import { CUT, CUTOUT_PATTERNS } from './cutout.js';
 import { FIN } from './fins/config.js';
 import { buildPad, PAD } from './fins/pad.js';
 import { bedContact, forgetSeated, seatedPartTris, seatingOf } from './fins/seating.js';
 import { braceTallWalls } from './fins/tall.js';
+import { earWalls } from './fins/ears.js';
 import { lastResortWalls } from './fins/shortwalls.js';
 import { fillCoverage } from './fins/fill.js';
 import { buildPerpFins, PERP, propServesPatch, unservedAfterWedges, wedgeVeto } from './fins/wedges.js';
@@ -87,6 +90,8 @@ function coverPitch(coverage) {
  */
 // the FDM foot clearance, restored when the tine direction goes back to horizontal
 const FOOT_GAP = PROP.footGap;
+// the pad's spread, restored when the filament goes back to one without its own
+const PAD_MARGIN = FIN.padMargin;
 
 export function applyTunables(t) {
   if (!t) return;
@@ -115,6 +120,17 @@ export function applyTunables(t) {
     PROP.footGap = t.tineDir === 'vertical' ? 0 : FOOT_GAP;
   }
   if (Number.isFinite(t.pinDepth)) PROP.pinDepth = Math.max(0.05, Math.min(PROP.pinDepthMax, t.pinDepth));
+  // And the filament's geometry (materials.js): how soft its walls are (ribs start
+  // lower, prop/brace.js ribScale), its anti-warp ears (prop/ears.js) and the pad's
+  // spread. The whole set every time, from the profile or the defaults, so a build
+  // never keeps the last one's filament. Its gap and pad numbers travel on their own
+  // (propGap, padH, padGrab): the page's fields show them.
+  if (typeof t.material === 'string' && Object.hasOwn(MATERIAL, t.material)) {
+    const m = MATERIAL[t.material];
+    BRACE.stiffness = m.stiffness ?? 1;
+    EARS.r = m.ears ?? 0;
+    FIN.padMargin = m.padMargin ?? PAD_MARGIN;
+  }
   // And the nozzle and wall lines, which scale the support widths (nozzle.js).
   if (t.nozzle !== undefined) applyNozzle(t.nozzle);
   if (t.wallLines !== undefined) applyWallLines(t.wallLines);
@@ -138,6 +154,9 @@ export function buildFins(topo, result, rot, opts = {}) {
   // Tall walls get face ribs, last, around everything placed (fins/tall.js). Draw
   // ribs its own walls on the page (draw.js braceTall).
   if (opts.mode !== 'draw' && opts.tallRibs !== false) braceTallWalls(topo, result, rot, built);
+  // ...and, for a filament that shrinks (EARS.r: ABS), ears at the walls' plate ends,
+  // after the ribs so they keep clear of them. Draw ears its own walls on the page.
+  if (opts.mode !== 'draw') earWalls(topo, result, rot, built, opts.layerHeight);
   crestPart(null);   // the crest's part is only for this build (a Worker keeps no mesh)
   forgetSeated(topo);   // nor the seated part: a page building inline would hold it
   // A piece of the part that starts in mid-air (a cut clean through, a loose

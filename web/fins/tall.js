@@ -6,13 +6,14 @@
  *
  * Runs LAST, after every wall, wedge, fill wall and sway brace is on the plate (ribs
  * built as walls went in took plate the next walls needed -- the fill pass's lesson).
- * Each wall standing on the plate over BRACE.tallH gets face ribs along it
+ * Each wall standing on the plate over BRACE.tallH (scaled down for a soft filament:
+ * prop/brace.js tallH, TPU's walls from ~43 mm at four lines) gets face ribs along it
  * (prop/brace.js, `kinds.tall`): only at stations whose floor is the plate, each kept
  * sideClear off the part and off every other support (its own wall and tines aside),
  * so no rib fuses two pieces. A wall the fill pass already braced is left as it is.
  * `opts.tallRibs: false` (the Brace tall walls box unticked) skips it.
  */
-import { BRACE, braceWall, PROP } from '../prop.js';
+import { BRACE, braceWall, PROP, tallH } from '../prop.js';
 import { surfaceZsAt } from '../prop/surface.js';
 import { seatedPartTris } from './seating.js';
 
@@ -87,7 +88,7 @@ export function planGrid() {
 
 /** The highest part surface under station p (a wall's centreline point, z the wall's
  *  top), or zBed: where that station's wall stands. */
-function floorAt(tris, p, zBed) {
+export function floorAt(tris, p, zBed) {
   let f = zBed;
   for (const z of surfaceZsAt(tris, p[0], p[1])) if (z < p[2] - 0.5 && z > f) f = z;
   return f;
@@ -99,7 +100,8 @@ function floorAt(tris, p, zBed) {
  */
 export function braceTallWalls(topo, result, rot, built) {
   const fins = built.fins ?? [];
-  const tall = fins.filter((f) => f.kind === 'prop' && !f.braces && (f.height ?? 0) > BRACE.tallH
+  const tallFrom = tallH();
+  const tall = fins.filter((f) => f.kind === 'prop' && !f.braces && (f.height ?? 0) > tallFrom
     && Array.isArray(f.line) && f.line.length >= 2);
   built.tallRibs = 0;
   if (!tall.length) return built;

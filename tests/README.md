@@ -30,6 +30,14 @@ UPDATE_GOLDEN=1 deno test -A tests/golden.test.js
 as without the pass, every rib stands on the plate under the tip taper, none runs into
 another support, and a drawn wall gets them only with `braceTall`.
 
+**`filament.test.js`** -- Filament profiles (`web/materials.js`, FIN-SPEC "Filament
+profiles"): PLA and PETG build triangle-for-triangle as with no filament; TPU ribs its
+walls from `cbrt(stiffness)` x the wall's thickness of `BRACE.tallH` (a 30 mm wall at
+2 lines, not at 4, never in PLA) and moves nothing else; ABS's ears are closed,
+outward-wound one-layer discs at plate wall ends that keep `sideClear` off the part,
+every other support and the pad, and a drawn wall gets them too; and a TPU or ABS build
+never leaks into the next PLA one.
+
 **`stability.test.js`** -- the same part nudged by 1e-9 rad builds the same supports,
 on 24 scenes (local issue 023: 14 of them used to change -- an end station dropped one
 ulp off surfaceZAt's grid, a part edge in a wall's end-cap plane read as a pierce, a
