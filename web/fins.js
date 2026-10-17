@@ -51,7 +51,7 @@ import { fillCoverage } from './fins/fill.js';
 import { buildPerpFins, PERP, propServesPatch, unservedAfterWedges, wedgeVeto } from './fins/wedges.js';
 import { judgeDownhill } from './fins/downhill.js';
 import { bends } from './prop/curved.js';
-import { applyNozzle, applyWallLines } from './nozzle.js';
+import { applyNozzle, applyWallLines, wallLines } from './nozzle.js';
 
 // Moved into web/fins/ (one module per concern); re-exported here so every
 // importer of fins.js is unchanged.
@@ -90,8 +90,10 @@ function coverPitch(coverage) {
  */
 // the FDM foot clearance, restored when the tine direction goes back to horizontal
 const FOOT_GAP = PROP.footGap;
-// the pad's spread, restored when the filament goes back to one without its own
+// the pad's spread and the bridge between walls, restored when the filament goes back
+// to one without its own
 const PAD_MARGIN = FIN.padMargin;
+const SPAN = PROP.maxUnsupportedSpan;
 
 export function applyTunables(t) {
   if (!t) return;
@@ -121,15 +123,18 @@ export function applyTunables(t) {
   }
   if (Number.isFinite(t.pinDepth)) PROP.pinDepth = Math.max(0.05, Math.min(PROP.pinDepthMax, t.pinDepth));
   // And the filament's geometry (materials.js): how soft its walls are (ribs start
-  // lower, prop/brace.js ribScale), its anti-warp ears (prop/ears.js) and the pad's
-  // spread. The whole set every time, from the profile or the defaults, so a build
-  // never keeps the last one's filament. Its gap and pad numbers travel on their own
-  // (propGap, padH, padGrab): the page's fields show them.
+  // lower, prop/brace.js ribScale), its anti-warp ears (prop/ears.js), the pad's
+  // spread and how far it bridges between walls. The whole set every time, from the
+  // profile or the defaults, so a build never keeps the last one's filament. Its gap
+  // and pad numbers travel on their own (propGap, padH, padGrab): the page's fields
+  // show them.
   if (typeof t.material === 'string' && Object.hasOwn(MATERIAL, t.material)) {
     const m = MATERIAL[t.material];
     BRACE.stiffness = m.stiffness ?? 1;
     EARS.r = m.ears ?? 0;
     FIN.padMargin = m.padMargin ?? PAD_MARGIN;
+    PROP.maxUnsupportedSpan = m.span ?? SPAN;
+    applyWallLines(wallLines);   // the squat brim's cap follows the span (nozzle.js)
   }
   // And the nozzle and wall lines, which scale the support widths (nozzle.js).
   if (t.nozzle !== undefined) applyNozzle(t.nozzle);

@@ -244,11 +244,11 @@
       <span class="printer-edit"><span class="when-shut" data-i18n="Edit">Edit</span><span class="when-open" data-i18n="Done">Done</span></span>
     </summary>
     <!-- Filament (web/materials.js): what this part prints in. Picking one sets the
-         Support gap (remembered per filament) and, for TPU, raises Wall lines to 4; TPU
-         and ABS also change what no field shows -- ribs from lower on a soft wall
-         (prop/brace.js), anti-warp ears and a wider pad for a shrinking one
+         Support gap (remembered per filament); TPU and ABS also change what no field
+         shows -- walls closer together where they bridge less, ribs from lower on a soft
+         wall (prop/brace.js), anti-warp ears and a wider pad for a shrinking one
          (prop/ears.js). PLA is the tuned default and builds exactly as before. -->
-    <label class="fld row" id="material-fld" data-i18n-title title="What you print this part in. PETG and TPU weld to supports harder, so they get a wider Support gap. TPU is soft: its walls go to 4 lines and tall ones get ribs at the plate. ABS and ASA shrink as they cool: walls on the plate get anti-warp ears and the bed pad spreads wider. Sets the Support gap (and Wall lines for TPU); you can still change them.">
+    <label class="fld row" id="material-fld" data-i18n-title title="What you print this part in. PETG and TPU weld to supports harder, so they get a wider Support gap. ABS and TPU sag over gaps PLA bridges, so their walls stand closer together. TPU is soft: tall walls get ribs at the plate. ABS and ASA shrink as they cool: walls on the plate get anti-warp ears and the bed pad spreads wider. Sets the Support gap; you can still change it.">
       <span data-i18n="Filament">Filament</span>
       <select id="material">
         <option value="pla" selected>PLA</option>

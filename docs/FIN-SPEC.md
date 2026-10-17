@@ -462,31 +462,41 @@ with no filament at all (`tests/filament.test.js`; the sweep's 621 meshes are
 byte-identical), and the plugins build PLA's geometry until their dialogs take it.
 
 Picking a filament sets the **Support gap** (remembered per filament: you tune each
-once) and, for TPU, raises **Wall lines** to 4 (never lowers it). The rest has no field:
+once). The rest has no field:
 
-| filament | gap | geometry | why |
-|---|---|---|---|
-| PLA | 0.2 | as tuned | the reference |
-| PETG | 0.3 | pad 0.3 mm, a 0.1 mm gap under Sure hold | welds to a support harder (the old PETG profile) |
-| ABS / ASA | 0.2 | **anti-warp ears**; the pad spreads **8 mm** (`padMargin`, 4 for the rest) | shrinks ~0.7-0.8% (ASA ~0.5%), two to three times PLA, so a thin wall foot peels from its ends and a part on a small foot lifts. ASA released clean at PLA's gap (sway braces, 2026-09-22) |
-| TPU | 0.3 | 4 wall lines; **ribs from `cbrt(stiffness)` × the wall's thickness of `tallH`**; PETG's pad | ~100× softer than PLA, so its walls sway under the nozzle; welds to itself harder |
+| filament | gap | bridge (`span`) | geometry | why |
+|---|---|---|---|---|
+| PLA | 0.2 | 12 mm | as tuned | the reference |
+| PETG | 0.3 | 12 mm | pad 0.3 mm, a 0.1 mm gap under Sure hold | welds to a support harder (the old PETG profile) |
+| ABS / ASA | 0.2 | **9 mm** | **anti-warp ears**; the pad spreads **8 mm** (`padMargin`, 4 for the rest) | shrinks ~0.7-0.8% (ASA ~0.5%), two to three times PLA, so a thin wall foot peels from its ends and a part on a small foot lifts; printed with little part cooling, so it sags over a span PLA holds. ASA released clean at PLA's gap (sway braces, 2026-09-22) |
+| TPU | 0.3 | **8 mm** | **ribs from `cbrt(stiffness)` × the wall's thickness of `tallH`**; PETG's pad | ~100× softer than PLA, so its walls sway under the nozzle and its bridges droop; welds to itself harder |
+
+**Bridge** (`span` → `PROP.maxUnsupportedSpan`, 12 on PLA's slenderness coupon). The
+distance the part bridges between two walls: every row pitch, the downhill walls'
+spacing, raster and wedge reach and Full coverage's reach (half of it) follow it, so a
+tighter filament gets more walls under the same ceiling. The densest slider end stays
+at 6 mm (`COVER_DENSE_SPAN`): rows closer than that fuse their feet. 9 and 8 are
+judgement calls until the slenderness coupon prints in ABS and TPU. On the 6R0 housing
+lying on its ribs (stepped ceilings 2-13 mm up and a 25° cone), Full coverage holds
+99.6 % of the overhang within 6 mm of a wall top in ABS and 99.0 % in TPU, against
+99.2 % in PLA at 12 -- but within 3 mm, 94 and 95 % against 83 %; Auto barely moves, because its gaps there are patches too small
+for a wall, not the pitch.
 
 **Ribs on a soft wall** (`ribScale` in `web/prop/brace.js`). A wall's sway under the
 nozzle's drag goes as `height³ / (E · th³)`, so a TPU wall bends as far as the 10 cm PLA
 wall the tall-wall rule ribs at `cbrt(E_TPU / E_PLA) × (th / 1.0)` of its height. TPU 95A
 datasheets give Young's moduli of 9–67 MPa (Bambu 9.2, Ultimaker 67), PLA 2.2–3.3 GPa:
 `stiffness` 0.01 (cube root 0.22) sits inside that. So its walls are ribbed from **22 mm**
-at 2 lines and **43 mm** at 4, and Full coverage's slim rule (`BRACE.aspect`, 6× the
-length) scales the same way. The rib itself is the tall-wall rib, unchanged (50 % rise,
-plate stations only, `sideClear` off the part and every support). PETG and ABS are within
-2× of PLA's modulus, inside the 10 cm rule's own uncertainty (one report), so they keep
-it; the scale never goes above 1, so Wall lines never move a PLA wall's ribs. Four lines
-are 8× as stiff across the wall as two and need no ribs to 43 mm, at the cost of plastic
-and of some walls that no longer fit (on the part this was written for: one wall fewer and
-one more overhang bare, against PLA's 2 lines). The threshold is the edge the PLA rule was set at,
-not a margin: a print or the tall/ coupon in TPU should set it. **TPU tines stretch
-instead of snapping** -- they still hold the part, but come off with side cutters; the
-readout says so.
+at 2 lines (43 mm at 4), and Full coverage's slim rule (`BRACE.aspect`, 6× the length)
+scales the same way. The rib itself is the tall-wall rib, unchanged (50 % rise, plate
+stations only, `sideClear` off the part and every support). PETG and ABS are within 2× of
+PLA's modulus, inside the 10 cm rule's own uncertainty (one report), so they keep it; the
+scale never goes above 1, so Wall lines never move a PLA wall's ribs. A first version
+also raised TPU to 4 wall lines: on the housing's low walls (all under 13 mm, stiff
+enough at 2) it only doubled the plastic and fitted fewer walls, holding less. The
+threshold is the edge the PLA rule was set at, not a margin: a print or the tall/ coupon
+in TPU should set it. **TPU tines stretch instead of snapping** -- they still hold the
+part, but come off with side cutters; the readout says so.
 
 **Ears** (`web/prop/ears.js`, Auto's pass `web/fins/ears.js`, Draw's walls in `draw.js`).
 A slicer's mouse ears: a disc at each end of a wall that stands on the plate there,
@@ -494,14 +504,26 @@ where a shrinking strip starts to peel.
 
 | feature | value | rationale |
 |---|---|---|
-| radius | **5 mm** (`EARS.r`), retried at 2.5 when blocked, then dropped | a 10 mm disc, the usual ear; under half the 12 mm row pitch past a 3 mm foot |
+| radius | a third of the wall's length (`EARS.perLen`), from **2.5** (`rMin`) to **5 mm** (`EARS.r`); a blocked ear retries at half, then is dropped | a strip's ends pull up by what it shrinks, which goes with its length: 10 mm discs on 7 mm walls were mostly ear (lollipops on the housing) |
 | height | **one layer** (the Layer height field) | like the Light pad: only the first layer grips the plate, more only welds harder to the wall |
 | where | centred on the wall's end station, only where its floor is the plate | a wall on the part doesn't peel off the plate |
 | clearance | `sideClear` (0.35) off the part beside it, the support gap over it; `sideClear` off every other support and the pad | an ear fused to another support or the part no longer breaks away by itself |
 | order | last, after the tall-wall ribs | ears keep clear of the ribs, not the ribs of the ears |
 | removal | an ear joins its wall's triangle ranges | removing a wall removes its ears |
 
-Ears add ~15 ms a build on the stress set (22 models × 4 poses: 239 ears, every one a
-closed, outward-wound disc outside the part). On the part this was written for (a
-124 mm housing on a 51 mm² curved foot) 11 of its 18 plate wall ends got one: the rest
-stand too close to where the part meets the plate.
+Ears add ~20 ms a build on the stress set (22 models × 4 poses: 294 ears, every one a
+closed, outward-wound disc outside the part). Under Full coverage's crowded walls most
+are refused (they would touch a neighbour): 7 on the housing on its ribs.
+
+## Full coverage's budget — `FILL` in `web/fins/fill.js`
+
+`maxWalls` 40, `maxTries` 120 and `maxChecks` 2000 bound the fill pass (counts, not a
+clock). A fill wall holds 17-26 mm² of the red it starts from (sphere, torus, cylinder,
+needle, the 6R0 housing), so 40 walls ran out at ~800 mm² and stopped with red still
+bare: every pose of the housing, tube X60/X90, torus flat/Y35, cylinder X90. The caps now
+grow with the bare red the fill starts from, past `maxWalls × perWall` (40 × 15 = 600
+mm²), up to `maxScale` 2.5×. A run that wasn't capped never reaches them, so it builds
+exactly as before. Bare red after the fill: the housing on its ribs 71 → 32 mm² (PLA),
+torus flat 573 → 169, cylinder X90 29 → 4. The cost is time on a big, red part: the
+housing as saved 8.5 → 14 s, at X60 14 → 21 s (PLA; ABS and TPU, with more walls to
+place at their tighter span, 25 and 29 s there). On its ribs, 1.8 s (PLA) to 6.5 s (TPU).

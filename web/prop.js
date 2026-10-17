@@ -102,20 +102,25 @@ export function noProps() {
 // a part actually lands a row wider than the cap (buildProps.sagRisk). Matthew
 // asked for this: a small part was floored at 3 fins by the hard cap.
 export const COVER_SPARSE_SPAN = 30.0;
+// ...and at the densest (1): half PLA's cap. Never tighter, whatever the filament's
+// cap (materials.js `span`): rows closer than this fuse their feet (footMax 3 either side).
+export const COVER_DENSE_SPAN = 6.0;
 
 /**
  * Wide-face row pitch for a coverage setting. 0.5 is the neutral default and maps
  * to the structural cap (maxUnsupportedSpan) -- the old sparse behaviour, so a part
  * built at the slider's default is byte-identical to before. Left of centre loosens
  * past the cap toward COVER_SPARSE_SPAN (fewer supports, may sag); right of centre
- * tightens to half the cap (denser). Monotonic, so tests/coverage.test.js holds.
+ * tightens toward COVER_DENSE_SPAN (denser; PLA's half cap, and a tighter
+ * filament's cap gets there sooner). Monotonic, so tests/coverage.test.js holds.
  */
 export function coverRowSpan(coverage) {
   const c = Math.max(0, Math.min(1, coverage));
   const cap = PROP.maxUnsupportedSpan;
+  const dense = Math.min(cap, COVER_DENSE_SPAN);
   return c <= 0.5
     ? cap + ((0.5 - c) / 0.5) * (COVER_SPARSE_SPAN - cap)   // 30 .. 12
-    : cap - ((c - 0.5) / 0.5) * (cap / 2);                  // 12 .. 6
+    : cap - ((c - 0.5) / 0.5) * (cap - dense);              // 12 .. 6
 }
 
 /**

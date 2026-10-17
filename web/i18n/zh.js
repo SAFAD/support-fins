@@ -487,7 +487,7 @@ export default {
   "Import an STL, 3MF or STEP.": "导入 STL、3MF 或 STEP。",
   "no supports on the part": "零件上不放支撑",
   "Filament": "耗材",
-  "What you print this part in. PETG and TPU weld to supports harder, so they get a wider Support gap. TPU is soft: its walls go to 4 lines and tall ones get ribs at the plate. ABS and ASA shrink as they cool: walls on the plate get anti-warp ears and the bed pad spreads wider. Sets the Support gap (and Wall lines for TPU); you can still change them.": "打印这个零件所用的耗材。PETG 和 TPU 与支撑粘得更牢，因此支撑间隙更大。TPU 较软：墙会加到 4 条线，高墙在热床处加肋。ABS 和 ASA 冷却时会收缩：热床上的墙两端加防翘边耳，底板垫也会铺得更宽。会设置支撑间隙（TPU 还会设置墙线数），之后仍可修改。",
+  "What you print this part in. PETG and TPU weld to supports harder, so they get a wider Support gap. ABS and TPU sag over gaps PLA bridges, so their walls stand closer together. TPU is soft: tall walls get ribs at the plate. ABS and ASA shrink as they cool: walls on the plate get anti-warp ears and the bed pad spreads wider. Sets the Support gap; you can still change it.": "打印这个零件所用的耗材。PETG 和 TPU 与支撑粘得更牢，因此支撑间隙更大。ABS 和 TPU 在 PLA 能架桥跨过的间隔上会下垂，因此它们的墙排得更密。TPU 较软：高墙在热床处加肋。ABS 和 ASA 冷却时会收缩：热床上的墙两端加防翘边耳，底板垫也会铺得更宽。会设置支撑间隙，之后仍可修改。",
   "{n} anti-warp ears": { other: "{n} 个防翘边耳" },
   "TPU is soft, so walls taller than {mm} mm get ribs at the plate to keep them from swaying under the nozzle.": "TPU 较软，因此高于 {mm} mm 的墙会在热床处加肋，避免在喷嘴下晃动。",
   "Brace tall walls is off: TPU walls taller than {mm} mm may sway as they print": "「加固高墙」已关闭：高于 {mm} mm 的 TPU 墙打印时可能会晃动",

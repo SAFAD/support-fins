@@ -11,8 +11,8 @@
  * strip would start to lift. One layer, like the Light pad, because only the first
  * layer grips the plate; more would only weld harder to the wall above it.
  *
- * An ear is centred on the wall's end station, so it reaches EARS.r past the end
- * and either side. It is built only where the end stands on the plate, only where
+ * An ear is centred on the wall's end station, so it reaches its radius past the end
+ * and either side: EARS.r on a long wall, less on a short one, which shrinks less. It is built only where the end stands on the plate, only where
  * the part stays clear of it (sideClear beside it, the support gap over it), and
  * only if `clear(tris)` (the caller's check against supports already built) passes;
  * a blocked ear retries at half the radius, then is dropped. Not printed yet.
@@ -23,7 +23,11 @@ import { surfaceZsAt } from './surface.js';
 
 export const EARS = {
   r: 0,           // mm: the ear's radius; 0 = no ears. The filament profile sets it (ABS 5).
-  rMin: 2.5,      // mm: a blocked ear retries at half its radius down to this, then is dropped
+  // ...on a wall at least 3 x that long. A strip's ends pull up by what it shrinks, which
+  // goes with its length: a 7 mm wall shrinks a third as far as a 21 mm one, and a 10 mm
+  // disc at each end of it was mostly ear (the 6R0 housing on its ribs: lollipops).
+  perLen: 1 / 3,
+  rMin: 2.5,      // mm: the smallest ear; a blocked one retries at half its radius down to this, then is dropped
   segs: 24,       // sides of the disc
   onPlate: 0.5,   // mm: an end whose floor is this close to the bed stands on the plate (BRACE.onPlate)
   step: 0.25,     // mm: part clearance sampled this finely under an ear
@@ -67,11 +71,14 @@ export function earWall(top, floorZ, tris, zBed, out, clear = () => true, h = PR
   const n = top.length;
   if (!(EARS.r > 0) || n < 2) return 0;
   const lift = Math.max(0.05, h);
+  let len = 0;
+  for (let i = 1; i < n; i++) len += Math.hypot(top[i][0] - top[i - 1][0], top[i][1] - top[i - 1][1]);
+  const r0 = Math.min(EARS.r, Math.max(EARS.rMin, len * EARS.perLen));
   let built = 0;
   for (const i of [0, n - 1]) {
     if (floorZ(i) > zBed + EARS.onPlate) continue;
     const [cx, cy] = top[i];
-    for (let r = EARS.r; r >= EARS.rMin - 1e-9; r /= 2) {
+    for (let r = r0; r >= EARS.rMin - 1e-9; r /= 2) {
       if (earHitsPart(tris, cx, cy, r, zBed, zBed + lift)) continue;
       const d = disc(cx, cy, r, zBed, lift);
       if (clear(d)) { out.push(...d); built++; break; }

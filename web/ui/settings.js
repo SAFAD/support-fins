@@ -243,10 +243,11 @@ el('iface').addEventListener('change', () => {
 });
 
 // Filament (../materials.js): what this part prints in. PETG and TPU weld to a support
-// harder, so picking one sets a wider Support gap; TPU's walls are soft (Wall lines up
-// to 4 and ribs from lower down, prop/brace.js), ABS's and ASA's shrink (anti-warp ears
-// and a wider pad, prop/ears.js). Those last two have no field: this page's engine copy
-// is set here for Draw, and the Worker gets `material` in the build's tunables.
+// harder, so picking one sets a wider Support gap; TPU and ABS bridge less between walls
+// (closer rows), TPU's walls are soft (ribs from lower down, prop/brace.js), ABS's and
+// ASA's shrink (anti-warp ears and a wider pad, prop/ears.js). Those have no field: this
+// page's engine copy is set here for Draw, and the Worker gets `material` in the build's
+// tunables.
 // The filament is remembered across visits, like the nozzle, and a saved session keeps
 // its own (history.js). The Support gap is remembered PER filament -- you tune each
 // once -- and PLA keeps the key every earlier visit stored it under.
@@ -271,7 +272,7 @@ function savedGap(m) {
 export let materialDensity = MATERIAL.pla.density;
 /** The filament's numbers into this page's engine state: the pad (Sure hold's thickness
  *  and tack, which the build request sends), the density, and the geometry no field
- *  shows (fins.js applyTunables). The Support gap and Wall lines are their fields'. */
+ *  shows (fins.js applyTunables). The Support gap is its field's. */
 function applyMaterial() {
   const m = MATERIAL[material()];
   materialDensity = m.density;
@@ -279,23 +280,13 @@ function applyMaterial() {
   PAD.grab = m.padGrab;
   applyTunables({ material: material() });
 }
-/** The filament's Wall lines (TPU's 4), only ever UP: a thicker wall picked for a tall
- *  part stays when the filament changes. Written, not dispatched (see below). */
-function presetWallLines() {
-  const lines = MATERIAL[material()].wallLines;
-  if (lines && Number(el('wall-lines').value) < lines && wallLinesFit(lines)) {
-    el('wall-lines').value = String(lines);
-    applyWallLines(lines);
-  }
-}
 el('material').addEventListener('change', () => {
   const m = material();
   try { localStorage.setItem(MATERIAL_KEY, m); } catch { /* storage off */ }
-  // The fields the filament presets are written, not dispatched: their own 'change'
-  // would record a second undo step. history.js reads the form after this handler.
+  // The gap the filament presets is written, not dispatched: its own 'change' would
+  // record a second undo step. history.js reads the form after this handler.
   el('gap').value = String(savedGap(m));
   PROP.gap = Math.min(0.4, Math.max(0.1, el('gap').valueAsNumber));
-  presetWallLines();
   applyMaterial();
   syncSectionSums();
   refreshFins();
@@ -469,7 +460,6 @@ export function initSettings() {
   applyNozzle(Number(el('nozzle').value));   // ...and the widths to the remembered nozzle
   applyWallLines(Number(el('wall-lines').value));
   fitWallLines();
-  presetWallLines();   // a remembered TPU starts at its 4 lines, as picking it does
 }
 
 window.addEventListener('languagechange', () => { syncCoverageUI(); if (typeof syncSectionSums === "function") syncSectionSums(); el('fins-toggle').textContent = finsVisible ? t('Fins on') : t('Add fins'); el('augment-toggle').textContent = drawAugment ? t('Done adding walls') : t('+ Add walls by hand'); });

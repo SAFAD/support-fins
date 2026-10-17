@@ -31,12 +31,14 @@ as without the pass, every rib stands on the plate under the tip taper, none run
 another support, and a drawn wall gets them only with `braceTall`.
 
 **`filament.test.js`** -- Filament profiles (`web/materials.js`, FIN-SPEC "Filament
-profiles"): PLA and PETG build triangle-for-triangle as with no filament; TPU ribs its
-walls from `cbrt(stiffness)` x the wall's thickness of `BRACE.tallH` (a 30 mm wall at
-2 lines, not at 4, never in PLA) and moves nothing else; ABS's ears are closed,
-outward-wound one-layer discs at plate wall ends that keep `sideClear` off the part,
-every other support and the pad, and a drawn wall gets them too; and a TPU or ABS build
-never leaks into the next PLA one.
+profiles"): PLA and PETG build triangle-for-triangle as with no filament; ABS and TPU
+bridge less (`span`), so a 40 mm ceiling gets more rows, and the densest slider end stays
+at 6 mm; TPU ribs its walls from `cbrt(stiffness)` x the wall's thickness of
+`BRACE.tallH` (a 30 mm wall at 2 lines, not at 4, never in PLA) and adds nothing else to
+PLA's build at its span; ABS's ears are closed, outward-wound one-layer discs at plate
+wall ends, a third of the wall's length across up to 5 mm, keeping `sideClear` off the
+part, every other support and the pad, and a drawn wall gets them too; and a TPU or ABS
+build never leaks into the next PLA one.
 
 **`stability.test.js`** -- the same part nudged by 1e-9 rad builds the same supports,
 on 24 scenes (local issue 023: 14 of them used to change -- an end station dropped one

@@ -61,16 +61,18 @@ The contact tip and tines stay one line wide either way. See
 Set **Filament** (PLA / PETG / ABS / ASA / TPU, default PLA) in the Printer row. Every
 support number was tuned on PLA, and two filaments fail in ways a clearance can't fix:
 
-- **TPU** is ~100× softer, so a thin wall sways under the nozzle. Walls go to 4 lines,
-  the Support gap to 0.3 mm, and walls taller than ~43 mm (22 mm at 2 lines) get ribs at
-  the plate. TPU tines stretch rather than snap: cut them off flush.
-- **ABS / ASA** shrink as they cool and peel off the plate. Walls standing on the plate
-  get one-layer anti-warp ears at their ends, and the bed pad spreads 8 mm instead of 4.
+- **TPU** is ~100× softer, so a thin wall sways under the nozzle and a bridge droops.
+  The Support gap goes to 0.3 mm, walls stand 8 mm apart instead of 12, and walls taller
+  than ~22 mm get ribs at the plate. TPU tines stretch rather than snap: cut them flush.
+- **ABS / ASA** shrink as they cool and peel off the plate, and sag without cooling.
+  Walls stand 9 mm apart, walls on the plate get one-layer anti-warp ears at their ends
+  (sized to the wall), and the bed pad spreads 8 mm instead of 4.
 
 PETG gets its wider 0.3 mm gap. Picking a filament sets the Support gap (remembered per
-filament) and you can still change it; PLA builds exactly as before. These profiles are
-reasoned from the materials, **not print-tested yet** — see `docs/FIN-SPEC.md`
-("Filament profiles").
+filament) and you can still change it; PLA builds exactly as before. For a part with
+broad flat ceilings, **Full coverage** is what fills them: its wall budget grows with
+the overhang there is to hold. These profiles are reasoned from the materials, **not
+print-tested yet** — see `docs/FIN-SPEC.md` ("Filament profiles").
 
 ### Sway braces for tall parts
 

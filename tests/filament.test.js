@@ -14,10 +14,10 @@ function box(x0, x1, y0, y1, z0, z1, out) {
   const v = [[x0, y0, z0], [x1, y0, z0], [x1, y1, z0], [x0, y1, z0], [x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1]];
   for (const [a, b, c] of [[0, 2, 1], [0, 3, 2], [4, 5, 6], [4, 6, 7], [0, 1, 5], [0, 5, 4], [1, 2, 6], [1, 6, 5], [2, 3, 7], [2, 7, 6], [3, 0, 4], [3, 4, 7]]) out.push(...v[a], ...v[b], ...v[c]);
 }
-/** A post with a 60 x 20 mm shelf out from its top, the shelf's underside `h` up. */
-function shelf(h) {
+/** A post with a 60 x `w` mm shelf out from its top, the shelf's underside `h` up. */
+function shelf(h, w = 20) {
   const t = [];
-  box(0, 10, 0, 20, 0, h + 2, t); box(10, 70, 0, 20, h, h + 2, t);
+  box(0, 10, 0, w, 0, h + 2, t); box(10, 70, 0, w, h, h + 2, t);
   const pos = new Float32Array(t);
   const topo = buildTopology({ getAttribute: (k) => (k === 'position' ? { array: pos } : null) });
   const rot = [1, 0, 0, 0, 1, 0, 0, 0, 1];
@@ -33,6 +33,14 @@ function build(s, material, o = {}) {
     { mode: 'auto', bedPad: true, tines: true, layerHeight: LAYER, ...o, tunables: { ...tunables, ...o.tunables } });
 }
 const same = (a, b) => a.length === b.length && a.every((v, i) => v[0] === b[i][0] && v[1] === b[i][1] && v[2] === b[i][2]);
+/** The site's PLA build at another filament's bridge span (materials.js `span`): what its
+ *  walls are before the filament's ribs and ears. */
+function plaAtSpan(s, material, tunables = {}) {
+  plain();
+  prop.PROP.maxUnsupportedSpan = MATERIAL[material].span;
+  const m = MATERIAL[material];
+  return build(s, undefined, { tunables: { padH: m.padH, padGrab: m.padGrab, propGap: m.propGap, ...tunables } });
+}
 /** Put the engine back on PLA's numbers whatever a test did. */
 function plain() {
   const m = MATERIAL.pla;
@@ -84,9 +92,8 @@ Deno.test('filament: TPU ribs its walls from cbrt(stiffness) x the wall thicknes
       assert(Math.abs(r.lo[2]) < 1e-6, 'a rib stands on the plate');
       assert(r.hi[2] < f.height - PROP.tipH - 0.9, 'a rib stops under the tip taper: the contact is untouched');
     }
-    // everything before the ribs is PLA's build at TPU's gap
-    plain();
-    const gapOnly = build(s, undefined, { tunables: { padH: 0.3, padGrab: -0.1, propGap: 0.3 } });
+    // everything before the ribs is PLA's build at TPU's gap and span
+    const gapOnly = plaAtSpan(s, 'tpu');
     assert(same(gapOnly.triangles, tpu2.triangles.slice(0, gapOnly.triangles.length)), 'TPU moved more than it added');
     const tpu4 = build(s, 'tpu', { tunables: { wallLines: 4 } });
     assert(tpu4.tallRibs === 0, `TPU, 4 lines: a 30 mm wall is stiff enough (${tpu4.tallRibs})`);
@@ -100,10 +107,10 @@ Deno.test('filament: ABS ears are one-layer closed discs at plate wall ends, cle
   try {
     plain();
     const s = shelf(30);
-    const pla = build(s, 'pla');
+    const pla = plaAtSpan(s, 'abs');
     const abs = build(s, 'abs');
     assert(abs.ears >= 2, `ears on the plate walls: ${abs.ears}`);
-    // the walls themselves are PLA's
+    // the walls themselves are PLA's at ABS's span
     assert(same(pla.triangles, abs.triangles.slice(0, pla.triangles.length)), 'ABS moved a wall');
     const eared = abs.fins.filter((f) => f.ears);
     assert(eared.reduce((a, f) => a + f.ears, 0) === abs.ears, 'every ear belongs to its wall');
@@ -115,6 +122,8 @@ Deno.test('filament: ABS ears are one-layer closed discs at plate wall ends, cle
       assert(Math.abs(r.lo[2]) < 1e-9 && Math.abs(r.hi[2] - LAYER) < 1e-9, `an ear is one layer on the plate: ${r.lo[2]}..${r.hi[2]}`);
       const w = r.hi[0] - r.lo[0];
       assert(w <= 2 * EARS.r + 1e-6 && w >= 2 * EARS.rMin - 1e-6, `an ear's radius: ${w / 2}`);
+      // ...a third of its wall's length (EARS.perLen), past rMin and up to EARS.r
+      assert(w / 2 <= Math.max(EARS.rMin, f.length * EARS.perLen) + 0.1, `a ${f.length.toFixed(1)} mm wall's ear: ${w / 2}`);
       // the post stands on the plate at x 0..10, y 0..20: no ear comes within sideClear
       for (const v of ears) {
         const dx = Math.max(0 - v[0], v[0] - 10, 0), dy = Math.max(0 - v[1], v[1] - 20, 0);
@@ -141,6 +150,23 @@ Deno.test('filament: ABS ears are one-layer closed discs at plate wall ends, cle
     assert(fins.FIN.padMargin === MATERIAL.abs.padMargin, `ABS's pad spread: ${fins.FIN.padMargin}`);
   } finally { plain(); }
   assert(fins.FIN.padMargin === 4 && EARS.r === 0 && BRACE.stiffness === 1, 'PLA restores the pad spread, the ears and the ribs');
+});
+
+Deno.test('filament: ABS and TPU bridge less than PLA, so a wide ceiling gets more rows', () => {
+  try {
+    const s = shelf(30, 40);
+    plain();
+    const rows = (b) => b.fins.filter((f) => f.kind === 'prop').length;
+    const pla = build(s, 'pla'), abs = build(s, 'abs'), tpu = build(s, 'tpu');
+    assert(prop.PROP.maxUnsupportedSpan === MATERIAL.tpu.span, `TPU's span: ${prop.PROP.maxUnsupportedSpan}`);
+    assert(rows(abs) > rows(pla) && rows(tpu) > rows(pla), `rows under a 40 mm ceiling: PLA ${rows(pla)}, ABS ${rows(abs)}, TPU ${rows(tpu)}`);
+    // the densest slider never packs rows tighter than PLA's (their feet would fuse)
+    plain();
+    assert(prop.coverRowSpan(1) === 6, `PLA's densest pitch: ${prop.coverRowSpan(1)}`);
+    fins.applyTunables({ material: 'tpu' });
+    assert(prop.coverRowSpan(1) === 6 && prop.coverRowSpan(0.5) === MATERIAL.tpu.span, `TPU: ${prop.coverRowSpan(0.5)}..${prop.coverRowSpan(1)}`);
+  } finally { plain(); }
+  assert(prop.PROP.maxUnsupportedSpan === 12, 'PLA restores the span');
 });
 
 Deno.test('filament: a filament never leaks into the next build', () => {
