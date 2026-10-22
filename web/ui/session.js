@@ -33,12 +33,20 @@ function boxOf(tris) {
 }
 const round = (v) => Math.round(v * 1e5) / 1e5;
 
-/** The session for an export: `partTris` is the part in print space, as written. */
-export function sessionOf(partTris) {
-  if (!part || !lastResult) return null;
+/** The model on screen, as sessionOf reads one. */
+const liveModel = () => (part && lastResult ? {
+  rot: rotM3.elements, offset: lastResult.offset, finMode, finsVisible, form: sessionForm(),
+  walls: drawnWalls, removed: removedSigs,
+} : null);
+
+/** The session for an export: `partTris` is the part in print space, as written;
+ *  `model` the one written, by default the one on screen (ui/export.js passes a
+ *  parked one's: { rot, offset, finMode, finsVisible, form, walls, removed }). */
+export function sessionOf(partTris, model = liveModel()) {
+  if (!model) return null;
   const { centre, size } = boxOf(partTris);
   // local -> print space exactly as the export maps the part (ui/export.js)
-  const r = rotM3.elements, o = lastResult.offset;
+  const r = model.rot, o = model.offset;
   const at = (v) => [
     round(r[0] * v.x + r[3] * v.y + r[6] * v.z + o.x - centre[0]),
     round(r[1] * v.x + r[4] * v.y + r[7] * v.z + o.y - centre[1]),
@@ -47,10 +55,11 @@ export function sessionOf(partTris) {
   return {
     v: 1,
     part: { size: size.map(round) },
-    finMode, finsVisible,
-    form: sessionForm(),
-    walls: drawnWalls.map((d) => d.kind === 'sway' ? { kind: 'sway', a: at(d.a) } : { a: at(d.a), b: at(d.b) }),
-    removed: [...removedSigs],
+    finMode: model.finMode, finsVisible: model.finsVisible,
+    form: model.form,
+    walls: model.walls.map((d) => d.kind === 'sway' ? { kind: 'sway', a: at(d.a), ...(d.capped ? { capped: true } : {}) }
+                                    : { a: at(d.a), b: at(d.b) }),
+    removed: [...model.removed],
   };
 }
 
@@ -105,16 +114,20 @@ const formOf = (form) => (form && typeof form === 'object'
   // a session saved before Wall lines was built at 2, not at what the page has now,
   // and before Long walls, tall-wall ribs and Curved walls without them (the nozzle and the viewer's
   // settings stay as this browser has them, even from a file saved before they were left out)
-  ? { 'wall-lines': '2', 'long-walls': false, 'tall-ribs': false, 'curved-walls': false, ...Object.fromEntries(Object.entries(form)
-    .filter(([id, v]) => !VIEWER_IDS.has(id) && settable(id, v))) } : {});
+  ? { 'wall-lines': '2', 'long-walls': false, 'tall-ribs': false, 'curved-walls': false, 'separate-walls': false,
+      'sway-cross-height': '50', 'tall-ribs-height': '10', ...Object.fromEntries(Object.entries(form)
+    .filter(([id, v]) => !VIEWER_IDS.has(id) && settable(id, v))) }
+  : {});
 
 /**
  * Restore `s` onto the part setPart just loaded: { n } supports restored, or
  * { why: 'changed' } when the part read back isn't the one the session was saved
  * with (re-saved and edited in a slicer, say), { why: 'unreadable' } when the
- * session itself is malformed -- either way it then loads as a plain part.
+ * session itself is malformed -- either way it then loads as a plain part. `beside`:
+ * the part was added to a plate of models (ui/models.js), whose fin settings it takes
+ * rather than bring its own -- they are the plate's.
  */
-export function restoreSession(s) {
+export function restoreSession(s, beside = false) {
   if (!part || !topology || !s) return { why: 'unreadable' };
   if (!readable(s)) return { why: 'unreadable' };
   const bb = part.geometry.boundingBox;
@@ -125,13 +138,15 @@ export function restoreSession(s) {
   for (const w of s.walls ?? []) {
     if (w.kind === 'sway') {
       const a = vec(w.a);
-      walls.push({ kind: 'sway', face: nearestFace(a), a, ok: false, info: null });
+      // a brace saved before the clicked-height cap ran up the whole face: it still does
+      walls.push({ kind: 'sway', face: nearestFace(a), a, capped: w.capped === true, ok: false, info: null });
     } else walls.push({ a: vec(w.a), b: vec(w.b), ok: false, info: null });
   }
   restoreState({
     quat: [0, 0, 0, 1], walls, load: null, removedSigs: s.removed ?? [],
-    finMode: s.finMode ?? finMode, finsVisible: s.finsVisible ?? true, drawAugment: false,
-    form: formOf(s.form),
+    finMode: beside ? finMode : s.finMode ?? finMode,
+    finsVisible: beside ? finsVisible : s.finsVisible ?? true, drawAugment: false,
+    form: beside ? {} : formOf(s.form),
   });
   resetHistory();          // a fresh part: undo starts here, not at the plain load
   return { n: walls.length };

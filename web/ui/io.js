@@ -13,6 +13,9 @@ import { isObj, readOBJ } from '../obj.js';
 import { el } from './dom.js';
 import { part, setPart } from './part.js';
 import { partObjectOf, restoreSession } from './session.js';
+import { freePlate, currentPlate, returnTo, dropEmptyPlate, isBusy } from './plates.js';
+import { addSlot, dropAdded, joinPlate, othersHistory } from './models.js';
+import { setHistory } from './history.js';
 
 export let importNote = '';
 export let lastImportMeta = null;
@@ -51,6 +54,12 @@ export function renderImportNote() {
       notes.push(m.restored
         ? tn('restored {n} hand-placed support and the settings', 'restored {n} hand-placed supports and the settings', m.restored)
         : t('restored the settings'));
+    } else if (m.session === 'beside') {
+      // added beside a plate's models: the settings are the plate's (ui/models.js)
+      notes.push(m.restored
+        ? tn('restored {n} hand-placed support; the plate keeps its settings',
+          'restored {n} hand-placed supports; the plate keeps its settings', m.restored)
+        : t('the plate keeps its settings'));
     } else if (m.session === 'changed') {
       notes.push(t('saved supports not loaded: the part changed since it was exported'));
     } else if (m.session === 'unreadable') {
@@ -60,6 +69,31 @@ export function renderImportNote() {
   }
   return importNote;
 }   // what the 3MF/STEP reader had to decide (merge, unit, skips)
+
+/** The part was taken off the plate (part.js clearPart): its import note goes too. */
+export function forgetImport() {
+  importNote = '';
+  lastImportMeta = null;
+  pendingSession = null;
+  el('s-import-note').textContent = '';
+}
+
+/** The import note, kept with a plate that is not showing (ui/plates.js). */
+export const importState = () => ({ importNote, lastImportMeta });
+export function setImportState(st) {
+  importNote = st.importNote;
+  lastImportMeta = st.lastImportMeta;
+}
+
+/** The part was rescaled (ui/scale.js): the supports a saved session brought back
+ *  are gone with it, so the note no longer says they were restored. */
+export function forgetSessionNote() {
+  if (!lastImportMeta?.session) return;
+  lastImportMeta.session = null;
+  lastImportMeta.restored = null;
+  importNote = renderImportNote();
+  el('s-import-note').textContent = importNote;
+}
 
 const loader = new STLLoader();
 
@@ -333,47 +367,119 @@ async function parseObj(buffer) {
 }
 
 /** setPart, then the saved session if the file carried one (the import note says
- *  how many supports came back, or why none did). */
-function afterLoad(geometry, name) {
+ *  how many supports came back, or why none did). `beside`: added to a plate of
+ *  models, whose settings and undo history go on (ui/models.js) -- as they do when
+ *  the file takes the place of one of several. */
+function afterLoad(geometry, name, beside = false) {
   const s = pendingSession;
   pendingSession = null;
+  const others = beside ? null : othersHistory();
+  beside ||= !!others;
+  const rejoin = () => (others ? setHistory(others) : beside && joinPlate());
   setPart(geometry, name);
+  rejoin();
   if (!s || !lastImportMeta) return;
   let r = { why: 'unreadable' };
-  try { r = restoreSession(s); } catch (err) { console.error(err); }
+  try { r = restoreSession(s, beside); } catch (err) { console.error(err); }
+  rejoin();
   lastImportMeta.restored = r.n ?? null;
-  lastImportMeta.session = r.why ?? 'restored';
+  lastImportMeta.session = r.why ?? (beside ? 'beside' : 'restored');
   importNote = renderImportNote();
   el('s-import-note').textContent = importNote;    // the load's report already ran
 }
 
-async function loadFile(file) {
+/** Load `file` onto the plate being edited: in place of its model, or with `add`
+ *  beside its models (ui/models.js). */
+async function loadFile(file, add = false) {
   if (!file) return;
+  // the plate it was imported to, which a click on another tab may have left while
+  // the file was read (a STEP kernel download, a 3MF's object picker)
+  const plate = currentPlate(), before = importState();
+  let prev = -1;
   try {
-    const geometry = await parseModel(await file.arrayBuffer());
-    if (geometry) afterLoad(geometry, file.name);
+    const read = await landing(plate, before, await parseModel(await file.arrayBuffer()));
+    if (!read) return;
+    if (add) prev = park(read);
+    afterLoad(read.geometry, file.name, prev >= 0);
   } catch (err) {
     console.error(err);
+    if (prev >= 0) dropAdded(prev);
     alert(`Could not read ${file.name}:\n${err.message}`);
   }
+}
+
+/**
+ * `geometry`, read, once it can land on `plate`: after an export switching through
+ * the models (it holds them still), with the file's own import note and saved
+ * session in place -- parseModel wrote them over the page's, which a switch of
+ * plates or Add model's park puts away with the model on screen. `before`: the
+ * page's import state when the read began. { geometry, mine, own } (the file's
+ * state, the model on screen's), or null when there is no geometry or the plate
+ * was deleted meanwhile.
+ */
+async function landing(plate, before, geometry) {
+  const mine = { ...importState(), pendingSession };
+  while (isBusy()) await new Promise((r) => setTimeout(r, 100));
+  if (!geometry || !returnTo(plate)) return null;
+  // untouched since the read: the model on screen's state is the one from before it
+  const own = importNote === mine.importNote && lastImportMeta === mine.lastImportMeta ? before : importState();
+  setImportState(mine);
+  pendingSession = mine.pendingSession;
+  return { geometry, mine, own };
+}
+
+/** Add model: park the model on screen with its own import note, then make room
+ *  for the file read (ui/models.js) with the file's. The slot that was live, for
+ *  dropAdded if the load fails. */
+function park({ geometry, mine, own }) {
+  setImportState(own);
+  const prev = addSlot(geometry);
+  setImportState(mine);
+  pendingSession = mine.pendingSession;
+  return prev;
+}
+
+/** One file replaces the showing plate's model, as it always has; several go one to
+ *  a plate (ui/plates.js), starting on this one if it is empty. In turn: a 3MF's
+ *  object picker waits for its answer before the next file is read. */
+async function loadFiles(files) {
+  if (files.length === 1) return loadFile(files[0]);
+  for (const file of files) {
+    freePlate();
+    await loadFile(file);
+  }
+  dropEmptyPlate();
 }
 
 // Clear the input once the file is taken: otherwise choosing the SAME file again
 // (after cancelling its object picker, say) changes nothing and fires no change.
 el('file').addEventListener('change', (e) => {
-  loadFile(e.target.files[0]);
+  loadFiles([...e.target.files]);
   e.target.value = '';
 });
+// The stats card's Add model: every file chosen goes onto this plate, beside the
+// models already on it, in turn (a 3MF's object picker waits for its answer).
+el('file-add').addEventListener('change', async (e) => {
+  const files = [...e.target.files];
+  e.target.value = '';
+  for (const file of files) await loadFile(file, true);
+});
+el('file-add').addEventListener('click', warmStep);
+el('add-part').addEventListener('click', () => el('file-add').click());
 // Reaching for a file is the cue to start loading the STEP kernel: it downloads
 // while the user is still in the file dialog (or mid-drag), not after they drop.
 el('file').addEventListener('click', warmStep);
+// the empty plate's own Import button (index.html #drop .empty)
+el('empty-import').addEventListener('click', () => el('file').click());
 
 /** Load a model that is already on the web (the sample model, a demo link). */
 export async function loadURL(url) {
+  const plate = currentPlate();
   const res = await fetch(url);
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-  const geometry = await parseModel(await res.arrayBuffer());
-  if (!geometry) return;                       // picker cancelled
+  const read = await landing(plate, importState(), await parseModel(await res.arrayBuffer()));
+  if (!read) return;   // picker cancelled, or its plate deleted
+  const { geometry } = read;
   afterLoad(geometry, url.split('/').pop());
   // Drop ?stl= once it has been consumed: the path is nobody's business but the
   // user's, and a stale one in the address bar is misleading after they open a
@@ -401,5 +507,5 @@ addEventListener('drop', (e) => {
   dragDepth = 0;
   drop.classList.remove('armed');
   if (part) drop.classList.add('hidden');
-  loadFile(e.dataTransfer.files[0]);
+  loadFiles([...e.dataTransfer.files]);
 });

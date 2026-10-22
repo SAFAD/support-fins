@@ -82,6 +82,55 @@ function rib(tris, o, d, zBed, stem, reach) {
   return out;
 }
 
+// The part sheared into a brace's lean, kept for the next call with the same lean:
+// both arms of a brace, and its nudged retries, share it (a copy of a big part each
+// time was most of the cost).
+let shear = null;
+function sheared(tris, zBed, lean) {
+  if (shear && shear.tris === tris && shear.zBed === zBed && shear.lx === lean[0] && shear.ly === lean[1]) return shear.local;
+  const local = Float64Array.from(tris);
+  for (let i = 0; i < local.length; i += 3) {
+    const z = local[i + 2] - zBed;
+    local[i] -= lean[0] * z;
+    local[i + 1] -= lean[1] * z;
+  }
+  shear = { tris, zBed, lx: lean[0], ly: lean[1], local };
+  return local;
+}
+
+/**
+ * One CROSS rib for a sway brace (web/sway.js): the same rib, stood across the
+ * brace's outer edge in unit plan direction `d`, so the thin plate -- deep toward
+ * the face, barely a bead across it -- is widened on the plate in the one
+ * direction it is weak. Two of them, one each way along the side, make the
+ * cross-braced foot the "Brace tall walls" box asks for.
+ *
+ * `o` is the base point on the brace's outer edge, `height` the brace's own
+ * height: the rib rises `rise` of it at the stem and lands footRatio x it out
+ * (never shorter than BRACE.minReach), stopping short of the brace's top. Only
+ * the horizontal reach is capped at the brace's base depth (`maxReach`). `lean`
+ * is the outer edge's XY shift per mm of height; part checks run in the
+ * inverse-sheared frame.
+ * Returns { reach, th } for the rib it built, or null when nothing fitted.
+ */
+export function braceCrossRib(out, tris, o, d, zBed, height, maxReach, lean, clear = () => true, rise = BRACE.rise) {
+  const ratio = Number.isFinite(rise) ? Math.max(0.1, Math.min(0.9, rise)) : BRACE.rise;
+  const stem = Math.min(ratio * height, height - 1);
+  if (stem < PROP.baseH + 1) return null;
+  const reach0 = Math.max(BRACE.minReach, Math.min(PROP.footRatio * height, maxReach));
+  const local = sheared(tris, zBed, lean);
+  for (let reach = reach0; reach >= BRACE.minReach; reach /= 2) {
+    const r = rib(local, o, d, zBed, stem, reach);
+    if (!r) continue;
+    const world = r.map((v) => {
+      const z = v[2] - zBed;
+      return [v[0] + lean[0] * z, v[1] + lean[1] * z, v[2]];
+    });
+    if (clear(world)) { out.push(...world); return { reach, th: PROP.th }; }
+  }
+  return null;
+}
+
 /**
  * Brace the wall whose contact line is `top` (stations [x, y, z], z the part above)
  * and whose bottom at station i is `floorZ(i)`. Appends the ribs' triangles to `out`
@@ -100,7 +149,7 @@ export function braceWall(top, floorZ, tris, zBed, out, clear = () => true, kind
   const slim = !!kinds.slim && height > BRACE.aspect * len, tall = !!kinds.tall && height > BRACE.tallH;
   if (!slim && !tall) return 0;
   const dx = (b[0] - a[0]) / len, dy = (b[1] - a[1]) / len;
-  const reach0 = PROP.footRatio * height;
+  const reach0 = tall ? Math.max(BRACE.minReach, PROP.footRatio * height) : PROP.footRatio * height;
   // ends only for a slim wall; face pairs at the middle of each faceStep share of a
   // tall one (one pair, at the middle station, otherwise)
   const ribs = slim ? [[0, [-dx, -dy]], [n - 1, [dx, dy]]] : [];

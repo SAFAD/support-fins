@@ -16,9 +16,11 @@ import { fileURLToPath } from 'node:url';
 import { run, pose, rotationMatrix, parseArgs } from '../cli.js';
 import { computeFins, ENGINE_DEFAULTS } from '../../shared/engine/fins_entry.js';
 import { reportLine } from '../../shared/engine/report.js';
+import { seatSoup } from '../../shared/engine/seat.js';
 import { readSTL, MODELS, analyze, fins, rotX, rotY, assert, assertClose, block } from '../../../tests/_util.js';
 import { buildTopology, IDENTITY3 } from '../../../web/overhangs.js';
 import { readThreeMF } from '../../../web/threemf.js';
+import { findIslands } from '../../../web/islands.js';
 import { writeBinarySTL } from '../../../web/stl.js';
 import { unzip, zipStore } from '../../../web/zip.js';
 
@@ -139,6 +141,31 @@ Deno.test('cli: .stl output merges part + fins; --fins-only lines the fins up wi
   assert(none.code === 0 && !none.fs.has('lb-fins-only.stl') && /nothing written/.test(none.out[0]), none.out[0]);
 });
 
+// Full coverage the way the site builds it (ui/finbuild.js finOpts): the coverage
+// slider's default, Long walls on, the island starts found from the topology. On the
+// part as the entry seats it: Full's fill race moves with where the part sits (the
+// lbracket off its file's origin builds 20 walls, centred 22), so this pins the
+// options, not the frame. The island starts are the page's (ui/islands.js), passed in.
+Deno.test('cli: --mode full is the website\'s Full coverage', async () => {
+  const { code, out } = await cli(['lb.stl', '--rot', '0,35,0', '--json', '--mode', 'full']);
+  assert(code === 0, `exit ${code}`);
+  const r = JSON.parse(out[0]);
+  const { pos } = seatSoup(pose(readSTL(LBRACKET), [0, 35, 0]));
+  const topo = buildTopology({ getAttribute: (k) => (k === 'position' ? { array: pos } : null) });
+  const res = analyze(topo, 45, IDENTITY3);
+  const { bedPad, tines, tineDensity, coverage, layerHeight } = ENGINE_DEFAULTS;
+  const islands = findIslands(topo, res, IDENTITY3);
+  const web = fins.buildFins(topo, res, IDENTITY3, { mode: 'full', longWalls: true, islands, bedPad, tines, tineDensity, coverage, layerHeight });
+  const auto = JSON.parse((await cli(['lb.stl', '--rot', '0,35,0', '--json'])).out[0]).stats;
+  assert(r.stats.braces === web.braceCount, `fins ${r.stats.braces} vs site ${web.braceCount}`);
+  assert(r.stats.tines === web.tines, `tines ${r.stats.tines} vs site ${web.tines}`);
+  // and the very same walls: the entry's soup is the site's fins, then its pad
+  const mine = computeFins(pose(readSTL(LBRACKET), [0, 35, 0]), { mode: 'full' }).triangles;
+  const site = Float32Array.from(web.triangles.flat(2));
+  assert(site.length > 0 && site.every((v, i) => v === mine[i]), 'Full walls differ from the site\'s');
+  assert(r.stats.braces > auto.braces, `Full ${r.stats.braces} walls, Auto ${auto.braces}`);
+});
+
 Deno.test('cli: flags reach the engine in the site\'s units', async () => {
   const base = JSON.parse((await cli(['lb.stl', '--rot', '0,35,0', '--json'])).out[0]).stats;
   const off = JSON.parse((await cli(['lb.stl', '--rot', '0,35,0', '--json', '--no-tines'])).out[0]).stats;
@@ -163,6 +190,13 @@ Deno.test('cli: bad arguments are exit 2 with a message in the flag\'s own units
     [['a.stl', 'b.stl', '-o', 'x.3mf'], /-o takes one input/],
     [['lb.stl', '--fins-only', '--rot', '0,35,0'], /--fins-only .* can't take --rot/],
     [['lb.stl', '--no-coverage'], /unknown option --no-coverage/],
+    [['lb.stl', '--plate', '2'], /require --preserve-project/],
+    [['lb.stl', '--list-plates'], /require --preserve-project/],
+    [['lb.stl', '--preserve-project', '--plate'], /--plate needs a value/],
+    [['lb.stl', '--preserve-project', '--plate='], /--plate needs a plate ID/],
+    [['lb.stl', '--preserve-project', '--plate', '--json'], /--plate needs a plate ID/],
+    [['lb.stl', '--preserve-project', '--list-plates=true'], /--list-plates takes no value/],
+    [['lb.stl', '--preserve-project', '--list-plates', '--list-objects'], /use --list-objects or --list-plates/],
     [[], /no input file/],
   ];
   for (const [argv, re] of cases) {
@@ -330,3 +364,8 @@ async function modifierFile() {
   const blob = zipStore([...parts].map(([name, data]) => ({ name, data })));
   return new Uint8Array(await blob.arrayBuffer());
 }
+
+Deno.test('cli: --version names the build (plugins/shared/version.py stamps it; a checkout is the base)', async () => {
+  const { code, out } = await cli(['--version']);
+  assert(code === 0 && out.length === 1 && /^support-fins 0\.7\.\d+$/.test(out[0]), `exit ${code}: ${out}`);
+});

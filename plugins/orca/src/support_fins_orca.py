@@ -6,7 +6,7 @@
 # name = "Support Fins"
 # description = "Adds printfins.com breakaway support fins under overhangs at slice time. Parts with Orca supports turned on are left alone."
 # author = "Matthew Trahan (engine), J (Orca plugin)"
-# version = "0.1.0"
+# version = "0.7.0"
 # type = "slicing-pipeline"
 # ///
 """Support Fins for OrcaSlicer -- fins added at slice time.
@@ -55,15 +55,22 @@ except ImportError:  # pragma: no cover - surfaced to the user in execute()
     np = None
 
 ENGINE_JS = "__FINS_ENGINE_JS__"   # replaced by build.py with the esbuild bundle
+VERSION = "0.7.0"   # stamped by build.py (plugins/shared/version.py), as the header's
 
+# The plugin's own config keys, and its whole default config: Orca's "Restore defaults"
+# writes this back as the stored config, so a default listing every setting would pin
+# those users to today's defaults for good. Every other key is a setting from options.json, the
+# schema every plugin dialog is built from (mode, gap, threshold, padStyle, cutout,
+# sway.on, ...), in the engine's units: a percent setting is value / 100, as
+# coverage 0.5 always was here. They go to the engine through host_options, which
+# checks each one, so a typo or a bad value fails the slice with the engine's own
+# message rather than quietly printing default fins.
 _DEFAULTS = {
     "enabled": True,
     "apply_to": "no-supports",   # "no-supports" | "all"
-    "coverage": 0.5,             # 0..1, website slider default
-    "tines": True,
-    "tine_density": 0.0,         # 0..1, website slider default
-    "bed_pad": True,
 }
+# Older configs' names: tine_density is tineDensity; bed_pad false is padStyle "off".
+_ALIASES = {"tine_density": "tineDensity"}
 
 # ---------------------------------------------------------------------------------
 # Engine
@@ -97,14 +104,30 @@ def compute_fins(soup, layer_height, cfg):
     soup: (M,3,3) float64 triangles, mm, in whatever frame the caller likes.
     Returns (fins (K,3,3) float64 in the SAME frame as `soup`, stats dict).
     """
-    return host_compute(_engine_ctx(), soup, {
-        "mode": "auto",
-        "bedPad": bool(cfg["bed_pad"]),
-        "tines": bool(cfg["tines"]),
-        "tineDensity": float(cfg["tine_density"]),
-        "coverage": float(cfg["coverage"]),
-        "layerHeight": float(layer_height),
-    })
+    ctx = _engine_ctx()
+    return host_compute(ctx, soup, engine_options(ctx, cfg, layer_height))
+
+
+def engine_options(ctx, cfg, layer_height):
+    """The plugin config -> checked engine options (raises ValueError on a bad key or
+    value). Layer height is always the slice's own (options.json hostSupplied)."""
+    values = {k: v for k, v in cfg.items() if k not in _DEFAULTS}
+    # hand-written JSON says 1 / 0 (or "1" / "0") for on / off
+    for o in host_schema(ctx)["options"]:
+        v = values.get(o["key"])
+        if o["type"] == "bool" and not isinstance(v, bool) and str(v).strip() in ("0", "1"):
+            values[o["key"]] = str(v).strip() == "1"
+    for old, new in _ALIASES.items():
+        if old in values:
+            values.setdefault(new, values[old])
+            del values[old]
+    bed_pad = values.pop("bed_pad", True)
+    if bed_pad is False or str(bed_pad).strip().lower() in ("0", "false", "no", "off"):
+        values.setdefault("padStyle", "off")
+    if "layerHeight" in values:
+        raise ValueError("layerHeight is Orca's own layer height: remove it from the plugin config")
+    values["layerHeight"] = float(layer_height)
+    return host_options(ctx, values)
 
 
 # ---------------------------------------------------------------------------------
@@ -158,11 +181,9 @@ def _cfg(self):
         src = json.loads(self.get_config() or "{}")
     except (AttributeError, TypeError, ValueError):
         src = {}
-    cfg = dict(_DEFAULTS)
-    for k, v in src.items():
-        if k in cfg:
-            cfg[k] = v
-    return cfg
+    if not isinstance(src, dict):
+        src = {}
+    return {**_DEFAULTS, **src}   # unknown keys are kept: the engine refuses them by name
 
 
 def _truthy(v):
@@ -329,13 +350,13 @@ class SupportFinsSlicing(orca.slicing.SlicingPipelineCapabilityBase):
         return "Support Fins"
 
     def get_default_config(self):
-        return _DEFAULTS
+        return dict(_DEFAULTS)
 
     def execute(self, ctx):
         if ctx.step != orca.slicing.Step.posSlice or ctx.object is None:
             return orca.ExecutionResult.success()
         cfg = _cfg(self)
-        if not cfg["enabled"]:
+        if not _truthy(cfg["enabled"]):
             return orca.ExecutionResult.success("Support Fins: disabled in plugin config")
         if np is None:
             return orca.ExecutionResult.failure(orca.PluginResult.RecoverableError,
@@ -347,14 +368,17 @@ class SupportFinsSlicing(orca.slicing.SlicingPipelineCapabilityBase):
             lh = float(po.config_value("layer_height") or ctx.config_value("layer_height") or 0.2)
         except (TypeError, ValueError):
             lh = 0.2
-        log = {"object_id": _safe(lambda: po.id()), "layer_height": lh, "started": time.time()}
+        log = {"object_id": _safe(lambda: po.id()), "layer_height": lh, "started": time.time(),
+               "version": VERSION}
         try:
             msg = inject_fins(po, cfg, lh, orca.slicing.unscale(1), log)
         except Exception as e:  # never break a slice over fins; report and carry on
             log["error"] = f"{type(e).__name__}: {e}"
             _write_log(log)
+            # a config the engine refused says so in its own words; anything else is a bug
+            why = str(e) if isinstance(e, ValueError) else f"{type(e).__name__}: {e}"
             return orca.ExecutionResult.failure(orca.PluginResult.RecoverableError,
-                                                f"Support Fins: {type(e).__name__}: {e}")
+                                                f"Support Fins: {why}")
         log["result"] = msg
         log["seconds"] = round(time.time() - log["started"], 3)
         _write_log(log)

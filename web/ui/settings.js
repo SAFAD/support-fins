@@ -5,7 +5,7 @@ import { t } from './i18n.js';
  * sections with their one-line recaps. Owns finsVisible / finMode / drawAugment.
  */
 import { applyTunables, FIN, PAD } from '../fins.js';
-import { PROP } from '../prop.js';
+import { BRACE, PROP } from '../prop.js';
 import { CUT } from '../cutout.js';
 import { MATERIAL } from '../materials.js';
 import { applyNozzle, applyWallLines, wallLinesFit } from '../nozzle.js';
@@ -51,6 +51,8 @@ export function syncCoverageUI() {
   fld.classList.toggle('disabled', full);
   fld.title = t(full ? COVER_TIP_FULL : coverTip);
   el('long-walls-fld').hidden = !full;   // Full coverage's own (fins/rows.js)
+  // only the fill pass joins walls (#309): Full's, and Auto's under Curved walls
+  el('separate-walls-fld').hidden = !(full || (autoLike() && el('curved-walls').checked));
   el('curved-walls-fld').hidden = !autoLike();   // Draw lays its own lines
   syncMore();   // coverage counts as changed only while the build reads it
 }
@@ -72,7 +74,7 @@ export function syncAugmentUI() {
 const MODE_NOTES = {
   auto: 'Places supports for you.',
   full: 'Auto, plus walls under every overhang it leaves bare. More plastic.',
-  draw: 'You place each wall: click an overhang face.',
+  draw: 'You place each wall: click two points across an overhang.',
 };
 export function syncModeButtons() {
   const v = el('fin-mode').value;
@@ -156,11 +158,24 @@ function debouncedRefresh(ms = 180) {
 // Tine grip only means anything when the tines are on, so hide its slider with the
 // toggle (keeps the panel honest -- no dead control).
 // Tine grip + layer height only matter when Tines is on -- hide both otherwise.
+// With vertical (resin) pins the slider only spaces the pins, so it says that there
+// (#309: "not sure what light vs tight grip are changing"). More pins is the way to
+// hold harder: resin slicers sink a tip 0-0.2 mm, and a deeper pin scars more.
+const PIN_SPACING_TIP = 'How many pins each wall gets. More pins = a firmer hold; fewer = fewer '
+  + 'marks to clean up. Add pins before deepening them: a deeper pin leaves a bigger mark and '
+  + 'is harder to snap off.';
+let gripTip = null;
 function syncTineGrip() {
   const on = el('tines').checked;
   el('tinegrip-fld').hidden = !on;
   el('tinedir-fld').hidden = !on;
   const pins = on && el('tine-dir').value === 'vertical';
+  const grip = el('tinegrip-fld');
+  gripTip ??= (grip.dataset.origTitle ??= grip.title);
+  grip.querySelector('.grip-tines').hidden = pins;
+  grip.querySelector('.grip-pins').hidden = !pins;
+  grip.title = t(pins ? PIN_SPACING_TIP : gripTip);
+  grip.dataset.tipPic = pins ? 'pin-spacing' : 'tine-density';
   el('pindepth-fld').hidden = !pins;
   el('resin-note').hidden = !pins;
   // The Light pad is one layer tall, and the interface band is one layer of the
@@ -170,12 +185,18 @@ function syncTineGrip() {
     && el('iface').value === 'off';
 }
 el('tines').addEventListener('change', () => { syncTineGrip(); refreshFins(); });
+window.addEventListener('languagechange', syncTineGrip);   // the swapped tooltip, retranslated
 // Tine direction (GitHub #309): vertical lays resin pins (prop/pins.js). This page's
 // copy is set here for Draw; the Worker gets it in the build's tunables.
 export function tineDirTunables() {
   return { tineDir: el('tine-dir').value, pinDepth: el('pin-depth').valueAsNumber };
 }
-el('tine-dir').addEventListener('change', () => { applyTunables(tineDirTunables()); syncTineGrip(); refreshFins(); });
+// Resin cures joined walls into one block (#309), so picking a direction sets
+// Separate walls to match; the box is the user's to change after.
+el('tine-dir').addEventListener('change', (e) => {
+  if (e.isTrusted) el('separate-walls').checked = el('tine-dir').value === 'vertical';
+  applyTunables(tineDirTunables()); syncTineGrip(); refreshFins();
+});
 el('pin-depth').addEventListener('input', () => { applyTunables(tineDirTunables()); debouncedRefresh(); });
 el('tine-density').addEventListener('input', () => debouncedRefresh());
 el('layer-height').addEventListener('input', () => debouncedRefresh());
@@ -191,6 +212,7 @@ function syncSway() {
   el('sway-spacing-fld').hidden = !on || !el('tines').checked;
   el('sway-depth-fld').hidden = !on;
   el('full-brace-depth-fld').hidden = !on;
+  el('sway-cross-height-fld').hidden = !on || !el('tall-ribs').checked;
   syncDrawControls();
   syncSectionSums();
 }
@@ -200,9 +222,15 @@ el('sway').addEventListener('change', () => {
 });
 el('tines').addEventListener('change', syncSway);
 el('full-brace-depth').addEventListener('change', () => refreshFins());
-for (const id of ['sway-from', 'sway-spacing', 'sway-depth']) {
+for (const id of ['sway-from', 'sway-spacing', 'sway-depth', 'sway-cross-height']) {
   el(id).addEventListener('input', () => debouncedRefresh());
 }
+el('sway-cross-height').addEventListener('change', () => {
+  const input = el('sway-cross-height'), v = input.valueAsNumber;
+  input.value = String(Number.isFinite(v) ? Math.max(+input.min, Math.min(+input.max, v)) : 50);
+  debouncedRefresh();
+});
+el('tall-ribs').addEventListener('change', syncSway);
 
 // Gap tuning. PROP.gap / PAD.grab are read fresh on every build, so setting them
 // here and rebuilding is all it takes. Clamp to the input's own range so a typed
@@ -226,10 +254,22 @@ el('cutout').addEventListener('change', () => {
 el('plate-only').addEventListener('change', () => refreshFins());
 // Long walls: Full coverage's rows (fins/rows.js), read by the build in the Worker.
 el('long-walls').addEventListener('change', () => refreshFins());
+el('separate-walls').addEventListener('change', () => refreshFins());
 // Brace tall walls: Auto's in the Worker (fins/tall.js), drawn ones on the page.
-el('tall-ribs').addEventListener('change', () => refreshFins());
+function syncTallRibs() {
+  el('tall-ribs-height-fld').hidden = !el('tall-ribs').checked;
+  const input = el('tall-ribs-height'), v = input.valueAsNumber;
+  if (Number.isFinite(v)) BRACE.tallH = Math.min(+input.max, Math.max(+input.min, v)) * 10;
+}
+el('tall-ribs').addEventListener('change', () => { syncTallRibs(); refreshFins(); });
+el('tall-ribs-height').addEventListener('input', () => { syncTallRibs(); debouncedRefresh(); });
+el('tall-ribs-height').addEventListener('change', () => {
+  syncTallRibs();
+  el('tall-ribs-height').value = String(BRACE.tallH / 10);
+  debouncedRefresh();
+});
 // Curved walls (#25): read by Auto's build in the Worker (finbuild.js finOpts).
-el('curved-walls').addEventListener('change', () => refreshFins());
+el('curved-walls').addEventListener('change', () => { syncCoverageUI(); refreshFins(); });
 
 // Interface material (GitHub #21): a wall's top band becomes its own solid, exported
 // as a part of the supports in the 3MF -- under flat contacts, or everywhere (tines
@@ -360,10 +400,10 @@ export function syncSectionSums() {
     el('iface').value === 'off' ? null : t('interface'),
   ].filter(Boolean).join(' · ');
   const grip = el('tine-density').valueAsNumber;
-  el('sum-tines').textContent = el('tines').checked
-    ? t(grip <= 20 ? 'light grip' : grip >= 80 ? 'firm grip' : 'medium grip')
-      + (el('tine-dir').value === 'vertical' ? ` · ${t('resin')}` : '')
-    : t('off');
+  el('sum-tines').textContent = !el('tines').checked ? t('off')
+    : el('tine-dir').value === 'vertical'
+      ? `${t(grip <= 20 ? 'fewer pins' : grip >= 80 ? 'more pins' : 'pins')} · ${t('resin')}`
+      : t(grip <= 20 ? 'light grip' : grip >= 80 ? 'firm grip' : 'medium grip');
   syncMore();
 }
 el('fin-opts').addEventListener('input', syncSectionSums);
@@ -401,6 +441,7 @@ export function initSettings() {
   syncTineGrip();
   syncPadStyle();
   syncSway();
+  syncTallRibs();
   CUT.pattern = el('cutout').value;   // a reload can keep the browser's last pick
   PROP.iface = ifaceMode();
   applyTunables(tineDirTunables());   // ...and its last tine direction and pin depth (#309)

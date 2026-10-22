@@ -36,7 +36,7 @@
  */
 import { floatingPieces } from './pieces.js';
 import { findWallPatches } from './planes.js';
-import { buildProps, crestOn, crestPart, noProps, PROP } from './prop.js';
+import { BRACE, buildProps, crestOn, crestPart, noProps, PROP } from './prop.js';
 import { buildSwayBraces } from './sway.js';
 import { CUT, CUTOUT_PATTERNS } from './cutout.js';
 import { FIN } from './fins/config.js';
@@ -44,10 +44,11 @@ import { buildPad, PAD } from './fins/pad.js';
 import { bedContact, forgetSeated, seatedPartTris, seatingOf } from './fins/seating.js';
 import { braceTallWalls } from './fins/tall.js';
 import { lastResortWalls } from './fins/shortwalls.js';
-import { fillCoverage } from './fins/fill.js';
+import { bareArea, fillCoverage } from './fins/fill.js';
+import { findIslands } from './islands.js';
 import { buildPerpFins, PERP, propServesPatch, unservedAfterWedges, wedgeVeto } from './fins/wedges.js';
 import { judgeDownhill } from './fins/downhill.js';
-import { bends } from './prop/curved.js';
+import { bends, CURVED } from './prop/curved.js';
 import { applyNozzle, applyWallLines } from './nozzle.js';
 
 // Moved into web/fins/ (one module per concern); re-exported here so every
@@ -96,6 +97,10 @@ export function applyTunables(t) {
   if (['auto', 'light', 'sure', 'custom'].includes(t.padStyle)) PAD.style = t.padStyle;
   if (t.padCustom) for (const k of Object.keys(PAD.custom)) set(PAD.custom, k, t.padCustom[k]);
   set(PROP, 'gap', t.propGap);
+  if (Number.isFinite(t.tineContactOffset)) PROP.tineContactOffset = Math.max(-0.2, Math.min(0.2, t.tineContactOffset));
+  if (Number.isFinite(t.tallRibsHeight) && t.tallRibsHeight > 0) {
+    BRACE.tallH = Math.min(2000, Math.max(1, t.tallRibsHeight));
+  }
   // Tines per wall, exact (0 = off, the spacing rules decide): the tine coupon asks
   // how few still hold. Calibration only.
   if (Number.isInteger(t.tinesPerWall) && t.tinesPerWall >= 0) PROP.tinesPerWall = t.tinesPerWall;
@@ -143,6 +148,17 @@ export function buildFins(topo, result, rot, opts = {}) {
   // A piece of the part that starts in mid-air (a cut clean through, a loose
   // body) needs saying no matter what was placed: see floatingPieces.
   built.floating = floatingPieces(topo, result, rot);
+  // How much red the walls leave bare (fins/fill.js bareArea), so the readout can say
+  // it: Auto measures its own walls; Full already knows its leftover, and only the
+  // total is added. Draw's walls are placed on the page, so it has none.
+  // `coverage` rides along so the page can re-measure after fins are removed by hand.
+  const coverage = opts.coverage ?? 0.5;
+  if (opts.mode === 'auto' || opts.mode === 'stabilize') {
+    built.bare = { ...bareArea(topo, result, rot, opts, built), coverage };
+  } else if (opts.mode === 'full' && built.fill) {
+    built.bare = { area: built.fill.unservedArea,
+                   total: bareArea(topo, result, rot, opts, { fins: [] }).total, coverage };
+  }
   return built;
 }
 
@@ -161,7 +177,13 @@ function buildFinsAndBraces(topo, result, rot, opts = {}) {
   // one of those, a brace is no longer a piece that snaps off by itself.
   const walls = (built.fins ?? []).map((f) => f.line).filter((l) => Array.isArray(l) && l.length);
   const sw = buildSwayBraces(topo, result, rot,
-    { ...opts.sway, tines: opts.tines, layerHeight: opts.layerHeight, iface: PROP.iface, avoid: { walls } });
+    { ...opts.sway, tines: opts.tines, layerHeight: opts.layerHeight, iface: PROP.iface, avoid: { walls },
+      tineContactOffset: opts.sway.tineContactOffset ?? PROP.tineContactOffset,
+      // "Brace tall walls" cross-ribs a brace over its start height, exactly as it
+      // does the drawn walls. The page sends the threshold through swayOpts (it is
+      // Infinity when the box is unticked); a caller that says nothing -- the
+      // plugins, the golden scenes -- keeps the plain brace it always got.
+      crossAbove: opts.tallRibs === false ? Infinity : (opts.sway?.crossAbove ?? Infinity) });
   // Each brace also gets a fin record: the Auto view draws and exports only the
   // triangles some record claims (per-fin removal), so an unrecorded brace would
   // be counted in the readout but never shown or written out.
@@ -179,18 +201,23 @@ function buildFinsAndBraces(topo, result, rot, opts = {}) {
     triangles: [...built.triangles, ...sw.triangles],
     fins: [...fins, ...braces],
     sway: { count: sw.count, tines: sw.tines, skipped: sw.skipped, reason: sw.reason,
+            // Cross ribs ("Brace tall walls") built on the braces, for the readout
+            cross: (sw.ribs ?? []).reduce((a, r) => a + (r.cross ?? 0), 0),
             // The outlines travel back so a brace the user then clicks by hand can be
             // checked against these: Auto builds in the Worker, so the page has no
             // other way to know where they stand. Plain data, structured-cloneable.
             braces: (sw.ribs ?? []).map((r) => ({ foot: r.foot, halfW: r.halfW, th: r.th,
-                                          height: r.height, levels: r.levels })) },
+                                          height: r.height, levels: r.levels, arms: r.arms })) },
   };
 }
 
 /** Auto's result plus the fill pass's walls (fins/fill.js), merged the way the
- *  short walls are: triangles appended, props and fins carrying ranges into them. */
+ *  short walls are: triangles appended, props and fins carrying ranges into them.
+ *  Its targets include the island starts (islands.js): `opts.islands` when the page
+ *  found them already (the worker's topo has no vertex ids), else found here. */
 function withFill(topo, result, rot, opts, auto) {
-  const f = fillCoverage(topo, result, rot, opts, auto);
+  const islands = opts.fillRegions ? [] : (opts.islands ?? findIslands(topo, result, rot));
+  const f = fillCoverage(topo, result, rot, { ...opts, islands }, auto);
   const at = auto.triangles.length;
   const props = f.props.map((q) => ({ ...q, triRanges: q.triRanges.map(([a, b]) => [a + at, b + at]) }));
   let wid = auto.fins.length;
@@ -209,7 +236,9 @@ function withFill(topo, result, rot, opts, auto) {
     braceCount: (auto.braceCount ?? 0) + (withTines ? fins.length : 0),
     propCount: (auto.propCount ?? 0) + (withTines ? 0 : fins.length),
     fill: { walls: f.stats.walls, rows: f.stats.rows ?? 0, rowsLost: f.stats.rowsLost ?? 0, rowBuilds: f.stats.rowBuilds ?? 0, joined: f.stats.joined ?? 0, ribs: f.stats.ribs, ties: f.stats.ties, tries: f.stats.tries, checks: f.stats.checks, capped: f.stats.capped, refused: f.stats.refused,
-            bareBefore: f.stats.startArea, unservedArea: f.unserved.area, unservedPts: f.unserved.pts },
+            bareBefore: f.stats.startArea, unservedArea: f.unserved.area, unservedPts: f.unserved.pts,
+            islands: islands.length, islandsBare: f.unserved.islands ?? 0, islandPts: f.unserved.islandPts ?? [],
+            islandsCapped: !!f.stats.islandsCapped },
   };
 }
 
@@ -240,8 +269,21 @@ function buildFinsCore(topo, result, rot, opts = {}) {
     // (`raster: false` is the tests' normal-pass-alone switch: no races at all.)
     if (opts.downhill === undefined) {
       if (opts.raster === false) return buildFinsCore(topo, result, rot, { ...opts, downhill: false });
-      // Curved walls (prop/curved.js): ticked, the curve is forced -- no judge
-      if (opts.curvedWalls === true) return buildFinsCore(topo, result, rot, { ...opts, downhill: true });
+      // Curved walls (prop/curved.js): ticked, the curve is forced -- no judge in
+      // Auto, where its own fill takes what the curves leave. In Full the curves can
+      // break up the fill's rows (coffee bean on its side: held -5%), so the unticked
+      // Full build is built too and the curved one stays only if it holds within
+      // CURVED.fullSlack of it, grips no higher and keeps every wedge (fins/downhill.js);
+      // the readout says when the curves were dropped.
+      if (opts.curvedWalls === true) {
+        const curved = () => buildFinsCore(topo, result, rot, { ...opts, downhill: true });
+        if (mode !== 'full') return curved();
+        return judgeDownhill(topo, result, rot, (on) => (on ? curved()
+          : { ...buildFinsCore(topo, result, rot, { ...opts, curvedWalls: undefined }), curvedDropped: true }),
+        // the slack is for a curve: a ticked build whose downhill walls all run
+        // straight is judged as the downhill walls are, strictly
+        (b) => (bends(b.props.filter((q) => q.downhill)) ? CURVED.fullSlack : 0));
+      }
       return judgeDownhill(topo, result, rot, (downhill) => buildFinsCore(topo, result, rot, { ...opts, downhill }));
     }
     const withTines = opts.tines ?? true;
@@ -355,7 +397,8 @@ function buildFinsCore(topo, result, rot, opts = {}) {
     // straight walls held, so the fill pass runs under the regions a curve won --
     // there only, rows off. Its numbers are its own (`curvedFill`): the readout's Full
     // coverage lines are Full's, but the red it couldn't reach is said all the same.
-    const curved = new Set(auto.props.filter((q) => q.downhill && bends([q])).map((q) => q.region));
+    // (a curve traced across a group's slivers counts for every region in it: prop/trace.js)
+    const curved = new Set(auto.props.filter((q) => q.downhill && bends([q])).flatMap((q) => q.members ?? [q.region]));
     if (mode === 'auto' && opts.curvedWalls === true && curved.size && !noWalls) {
       const f = withFill(topo, result, rot, { ...opts, tines: withTines, coverage, longWalls: false, fillRegions: curved }, auto);
       return { ...f, fill: undefined,

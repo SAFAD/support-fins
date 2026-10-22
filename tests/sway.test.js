@@ -122,7 +122,7 @@ Deno.test('sway: Draw stands a brace on an upright side, and refuses the roof', 
   assert(!sway.faceIsUpright(topo, ID, roof), 'the roof should not read as upright');
   const r = sway.swayAtFace(topo, res, ID, side, [0, -15, 60], { tines: true, layerHeight: LAYER });
   assert(r.ok, `hand brace failed: ${r.reason}`);
-  assert(r.height > 100, `hand brace only ${r.height}mm tall on a 150mm side`);
+  assert(Math.abs(r.height - 60) < 1e-6, `hand brace exceeds or misses the clicked height: ${r.height}`);
   assert(isClosed(r.tris), 'hand brace is not closed');
 });
 
@@ -152,12 +152,12 @@ Deno.test('sway: a brace facing another across a channel is refused, a staggered
   };
   const inA = faceFacing(1, -20), inB = faceFacing(-1, 20);   // the two channel walls
   const opts = { tines: true, layerHeight: LAYER };
-  const first = sway.swayAtFace(topo, res, ID, inA, [0, -20, 60], opts);
+  const first = sway.swayAtFace(topo, res, ID, inA, [0, -20, 150], opts);
   assert(first.ok, `first brace failed: ${first.reason}`);
-  const across = sway.swayAtFace(topo, res, ID, inB, [0, 20, 60], opts, [first]);
+  const across = sway.swayAtFace(topo, res, ID, inB, [0, 20, 150], opts, [first]);
   assert(!across.ok && /run into another brace/.test(across.reason),
          `a brace straight across the channel was not refused (${across.ok ? 'built' : across.reason})`);
-  const staggered = sway.swayAtFace(topo, res, ID, inB, [20, 20, 60], opts, [first]);
+  const staggered = sway.swayAtFace(topo, res, ID, inB, [20, 20, 150], opts, [first]);
   assert(staggered.ok, `a staggered brace was refused: ${staggered.reason}`);
   assert(!sway.swayClashes(staggered, [first]), 'the staggered brace still reads as clashing');
 });
@@ -272,4 +272,36 @@ Deno.test('sway: "grip from" is the user\'s choice, not a stilt to refuse', () =
   const { topo, res } = post();
   const s = sway.buildSwayBraces(topo, res, ID, { tines: true, layerHeight: LAYER, gripFrom: 80 });
   assert(s.count >= 2, `"grip from" 80mm was refused as a stilt (${s.count} braces, ${s.reason})`);
+});
+
+Deno.test('sway: Draw runs a brace up the whole side with `full`, and a low click says why', () => {
+  const { topo, res } = post();
+  let side = -1;
+  for (let f = 0; f < topo.nFaces && side < 0; f++) if (topo.nrm[f * 3 + 1] < -0.9) side = f;
+  const opts = { tines: true, layerHeight: LAYER };
+  const full = sway.swayAtFace(topo, res, ID, side, [0, -15, 60], { ...opts, full: true });
+  const auto = sway.buildSwayBraces(topo, res, ID, opts).ribs[0];
+  assert(full.ok, `full-height hand brace failed: ${full.reason}`);
+  assert(full.height > 100 && Math.abs(full.height - auto.height) < 1e-6,
+         `a full hand brace should stand as tall as Auto's (${auto.height}), got ${full.height}`);
+  const low = sway.swayAtFace(topo, res, ID, side, [0, -15, 10], opts);
+  assert(!low.ok && /too low/.test(low.reason), `a 10mm click should be too low, got ${low.ok ? 'a brace' : low.reason}`);
+});
+
+Deno.test('sway: "Brace tall walls" cross-ribs a brace over its start height, clear of the part', () => {
+  const { topo, res } = post();
+  const opts = { tines: true, layerHeight: LAYER };
+  const plain = sway.buildSwayBraces(topo, res, ID, opts);
+  // what the page sends with Brace tall walls ticked (ui/finbuild.js swayOpts)
+  const ribbed = sway.buildSwayBraces(topo, res, ID, { ...opts, crossAbove: 100, crossRise: 0.5 });
+  assert(ribbed.count === plain.count && ribbed.tines === plain.tines, 'cross ribs cost a brace or its tines');
+  for (let i = 0; i < ribbed.ribs.length; i++) {
+    const r = ribbed.ribs[i], extra = r.tris.slice(plain.ribs[i].tris.length);
+    assert(r.cross === 2, `a ${r.height.toFixed(0)}mm brace got ${r.cross} cross ribs, expected 2`);
+    assert(isClosed(extra), 'a cross rib is not closed');
+    const inside = insideCount(topo, ID, res.offset, extra.map((v) => [v[0], v[1], Math.max(v[2], 1e-3)]));
+    assert(inside === 0, `${inside} cross-rib verts are inside the part`);
+  }
+  const under = sway.buildSwayBraces(topo, res, ID, { ...opts, crossAbove: 200, crossRise: 0.5 });
+  assert(under.ribs.every((r) => !r.cross), 'a brace under the start height got cross ribs');
 });

@@ -4,7 +4,9 @@
  * a resin slicer's contact tip sinks into the model -- and a wall stopping `gap`
  * under a flat span (the FDM wall) holds nothing. Instead of the horizontal comb
  * (tines.js), each station gets a thin square pin standing on the wall top, up
- * across the gap and PROP.pinDepth into the part above it.
+ * across the gap and PROP.pinDepth into the part above it. Like a resin slicer's
+ * support, it narrows across the gap to a PROP.pinTipW contact tip, so it snaps at
+ * the part's surface rather than partway down or by tearing a chip out.
  *
  * Every pin is checked, never assumed: its four top corners must be inside the
  * part (so it bites the underside, not its own edge), and a pin that would come
@@ -13,7 +15,7 @@
  * Untested on a resin printer; the numbers are resin slicers' tip sizes.
  */
 import { insidePart } from '../inside.js';
-import { boxExtrude } from '../solids.js';
+import { stackExtrude } from '../solids.js';
 import { PROP } from './config.js';
 
 const PROBE = 0.05;     // how finely a pin corner looks up for the part's surface
@@ -58,11 +60,12 @@ export function emitPins(line, tris, topo, rot, offset, out, stepArg = PROP.tine
     const corners = [[-half, -half], [half, -half], [half, half], [-half, half]]
       .map(([a, b]) => [x + ux * a + vx * b, y + uy * a + vy * b]);
     // where each corner meets the part: the pin's top clears the HIGHEST, so all four bite
-    let meet = -Infinity;
+    let meet = -Infinity, low = Infinity;
     for (const [cx, cy] of corners) {
       const e = entry(cx, cy, wallTop);
       if (e === null) return;               // a corner off the part's edge: no pin
       meet = Math.max(meet, e);
+      low = Math.min(low, e);
     }
     // sink pinDepth in, shallower where the part is thinner than that; a section too
     // thin for even a quarter of it gets no pin (it would print through)
@@ -71,9 +74,14 @@ export function emitPins(line, tris, topo, rot, offset, out, stepArg = PROP.tine
       if (corners.every(([cx, cy]) => inside(cx, cy, meet + dep) && inside(cx, cy, meet + dep / 2))) { top = meet + dep; break; }
     }
     if (top === null) return;
-    // from inside the wall (tineOverlap down, so they union) up to `top`
-    const bot = wallTop - PROP.tineOverlap;
-    boxExtrude([[-half, -half], [half, -half], [half, half], [-half, half]], bot, top,
+    // from inside the wall (tineOverlap down, so they union), full width to the wall
+    // top, narrowing across the gap to the tip a probe step under the LOWEST corner's
+    // meet (the surface is within PROBE below it) -- so on a sloped or curved underside
+    // the part touches the pin only where it's tip-wide -- then tip-wide to `top`
+    const bot = wallTop - PROP.tineOverlap, tipZ = low - PROBE;
+    const neck = Math.min(wallTop, tipZ - 0.05);   // low >= wallTop: neck stays over bot
+    const sq = (h) => [[-h, -h], [h, -h], [h, h], [-h, h]], tip = PROP.pinTipW / 2;
+    stackExtrude([sq(half), sq(half), sq(tip), sq(tip)], [bot, neck, tipZ, top],
       (a, b, c) => [x + ux * a + vx * b, y + uy * a + vy * b, c], out);
     if (grip && bot < grip.z) grip.z = bot;
     if (globalThis.__TINECAP) globalThis.__TINECAP.push({ x, y, z: z - (tineH ?? PROP.tineH) / 2, biteX: 0, biteY: 0 });

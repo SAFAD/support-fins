@@ -8,11 +8,14 @@
 // plugin dialog control.
 import { computeFins, optionsFromDialog, optionVisible, OPTIONS_SCHEMA } from '../shared/engine/fins_entry.js';
 import { reportLine } from '../shared/engine/report.js';
+import { VERSION } from './version.js';
 import { readSTL, writeBinarySTL } from '../../web/stl.js';
 import { readThreeMF, writeThreeMF } from '../../web/threemf.js';
 import { readOBJ } from '../../web/obj.js';
 import { cutNegatives } from '../../web/cut.js';
 import { unzip } from '../../web/zip.js';
+import { finProject } from './project.js';
+import { formatProjectReport } from './project-report.js';
 
 // --- flags from options.json -------------------------------------------------
 
@@ -37,7 +40,21 @@ export function helpText() {
     '                        your file (so not with --rot)',
     '  --object <n|name>     which object of a multi-object 3MF or OBJ to fin (1-based)',
     '  --json                one JSON line per file instead of the summary',
+    '  --preserve-project    keep a Bambu Studio/MakerWorld project; add fins to all',
+    '                        printable objects on their original plates',
+    '  --plate <id>          project mode: select a plate ID from the listing; repeat for several',
+    '  --list-objects        project mode: plate summary + build-item numbers; write nothing',
+    '  --list-plates         project mode: plate IDs and object counts; write nothing',
+    '  --check               with --preserve-project: check settings and meshes; write nothing',
+    '                        exit 1 if any selected object is incompatible',
+    '  --fin-extruder <n>    project mode: existing filament slot for fins (1-based)',
+    '  --disable-native-supports  project mode: disable slicer supports on selected objects',
+    '  --overwrite           project mode: allow replacing an existing output',
+    '                        default: <part>-fins-project.3mf; repeat --object to select several',
+    '  --resume              project mode: save/reuse completed-object checkpoints',
+    '  --cache-dir <path>    with --resume: cache folder (default: <input>.fins-cache)',
     '  -h, --help            this text',
+    '  --version             which build this is',
     '',
     'settings (the site\'s, same defaults):',
   ];
@@ -62,8 +79,10 @@ class UsageError extends Error {}
 
 /** argv (without the program name) -> { inputs, output, rot, finsOnly, object, json, help, dialog } */
 export function parseArgs(argv) {
-  const out = { inputs: [], output: null, rot: null, finsOnly: false, object: null,
-                json: false, help: false, dialog: {} };
+  const out = { inputs: [], output: null, rot: null, finsOnly: false, object: null, objects: [],
+                json: false, help: false, dialog: {}, preserveProject: false, listObjects: false, check: false,
+                plates: [], listPlates: false,
+                finExtruder: null, disableNativeSupports: false, overwrite: false, resume: false, cacheDir: null };
   let files = false;
   for (let i = 0; i < argv.length; i++) {
     let a = argv[i];
@@ -78,11 +97,31 @@ export function parseArgs(argv) {
       return argv[++i];
     };
     if (a === '-h' || a === '--help') out.help = true;
+    else if (a === '--version') out.version = true;
     else if (a === '-o' || a === '--output') out.output = next();
     else if (a === '--rot') out.rot = parseRot(next());
     else if (a === '--fins-only') out.finsOnly = true;
-    else if (a === '--object') out.object = next();
+    else if (a === '--object') { out.object = next(); out.objects.push(out.object); }
+    else if (a === '--plate') {
+      const v = next();
+      if (!v.trim() || v.startsWith('--')) throw new UsageError('--plate needs a plate ID (see --list-plates)');
+      out.plates.push(v);
+    }
     else if (a === '--json') out.json = true;
+    else if (a === '--cache-dir') {
+      out.cacheDir = next();
+      if (!out.cacheDir.trim() || out.cacheDir.startsWith('--')) throw new UsageError('--cache-dir needs a directory path');
+    }
+    else if (a === '--fin-extruder') {
+      const v = next();
+      if (!/^[1-9]\d*$/.test(v) || !Number.isSafeInteger(+v)) throw new UsageError('--fin-extruder must be a positive integer');
+      out.finExtruder = +v;
+    } else if (['--preserve-project', '--list-objects', '--list-plates', '--check', '--disable-native-supports', '--overwrite', '--resume'].includes(a)) {
+      if (value !== null) throw new UsageError(`${a} takes no value`);
+      out[{ '--preserve-project': 'preserveProject', '--list-objects': 'listObjects', '--check': 'check',
+        '--list-plates': 'listPlates',
+        '--disable-native-supports': 'disableNativeSupports', '--overwrite': 'overwrite', '--resume': 'resume' }[a]] = true;
+    }
     else if (a.startsWith('--')) {
       const neg = a.startsWith('--no-');
       const flag = a.slice(neg ? 5 : 2);
@@ -220,6 +259,7 @@ function defaultOutput(input, finsOnly) {
  * plate origin, on z = 0 -- the site's export frame -- with the fins in that frame.
  */
 export async function finFile(input, args, io, engineOptions) {
+  if (args.preserveProject) return finProject(input, args, io);
   const output = args.output ?? defaultOutput(input, args.finsOnly);
   if (!/\.(3mf|stl)$/i.test(output)) throw new Error(`output ${output}: write .3mf or .stl`);
   if (args.finsOnly && !/\.stl$/i.test(output)) throw new Error('--fins-only writes an .stl');
@@ -276,8 +316,26 @@ export async function run(argv, io) {
   try {
     args = parseArgs(argv);
     if (args.help) { io.out(helpText()); return 0; }
+    if (args.version) { io.out(`support-fins ${VERSION}`); return 0; }
     if (args.inputs.length === 0) throw new UsageError('no input file (see --help)');
     if (args.output && args.inputs.length > 1) throw new UsageError('-o takes one input; with several, each is written next to its input');
+    if (args.preserveProject && (args.rot || args.finsOnly)) {
+      throw new UsageError('--preserve-project keeps the existing pose and writes a full project; do not combine with --rot or --fins-only');
+    }
+    if (!args.preserveProject && (args.check || args.listObjects || args.listPlates || args.plates.length
+        || args.finExtruder !== null || args.disableNativeSupports || args.overwrite)) {
+      throw new UsageError('--plate, --check, --list-objects, --list-plates, --fin-extruder, --disable-native-supports and --overwrite require --preserve-project');
+    }
+    if (args.check && (args.listObjects || args.listPlates || args.output || args.overwrite)) {
+      throw new UsageError('--check writes nothing; do not combine with --list-objects, --list-plates, --output or --overwrite');
+    }
+    if (args.listObjects && args.listPlates) throw new UsageError('use --list-objects or --list-plates, not both');
+    if (!args.preserveProject && args.objects.length > 1) throw new UsageError('repeat --object only with --preserve-project');
+    if (args.resume && !args.preserveProject) throw new UsageError('--resume requires --preserve-project');
+    if (args.cacheDir !== null && !args.resume) throw new UsageError('--cache-dir requires --resume');
+    for (const [on, flag] of [[args.listObjects, '--list-objects'], [args.listPlates, '--list-plates'], [args.check, '--check']]) {
+      if (on && args.resume) throw new UsageError(`${flag} does not generate fins; do not combine with --resume`);
+    }
     if (args.finsOnly && args.rot) {
       throw new UsageError('--fins-only lines up with the part as it is in your file, so it can\'t take --rot: '
         + 'pose the part in your file, or write part + fins (.3mf)');
@@ -297,9 +355,11 @@ export async function run(argv, io) {
     try {
       const r = await finFile(input, args, io, engineOptions);
       io.out(args.json ? JSON.stringify(r) : `${r.input} -> ${r.output ?? '(nothing)'}: ${r.report}`);
+      if (args.check && r.summary.incompatible) failed++;
     } catch (e) {
       failed++;
-      io.err(args.json ? JSON.stringify({ input, error: e.message }) : `support-fins: ${input}: ${e.message}`);
+      io.err(args.json ? JSON.stringify({ input, error: e.message, ...(e.projectReport ?? {}) })
+        : `support-fins: ${input}: ${e.message}` + (e.projectReport ? `\n${formatProjectReport(e.projectReport)}` : ''));
     }
   }
   return failed ? 1 : 0;

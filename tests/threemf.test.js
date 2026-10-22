@@ -13,7 +13,7 @@
 
 import { WEB, MODELS, assert, assertClose, block, readSTL, buildTopology, analyze, rotX } from './_util.js';
 
-const { writeThreeMF, readThreeMF, mergeColors } = await import(`${WEB}threemf.js`);
+const { writeThreeMF, writePlate3MF, readThreeMF, mergeColors } = await import(`${WEB}threemf.js`);
 const { zipStore, unzip } = await import(`${WEB}zip.js`);
 
 const REL = 'http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel';
@@ -749,6 +749,159 @@ Deno.test('3MF export: the locked form writes no slicer parts (they would cut th
   const { r, parts } = await writeExtras([NEG], { separate: false });
   assert(!parts.has('Metadata/model_settings.config') && r.objects.every((o) => o.extras.length === 0),
     'a negative part rode into the object holding the fins');
+});
+
+// --- several models on one plate (writePlate3MF) ----------------------------
+
+const at = (tris, dx, dy = 0) => tris.map((p) => [p[0] + dx, p[1] + dy, p[2]]);
+const box = (x0, x1, y0, y1, z0, z1) => triples(block(x0, x1, y0, y1, z0, z1));
+async function writePlate(models, opts = { separate: true }) {
+  const bytes = new Uint8Array(await writePlate3MF(models, opts).arrayBuffer());
+  const parts = await unzip(bytes);
+  return { r: await readThreeMF(bytes), parts, model: new TextDecoder().decode(parts.get('3D/3dmodel.model')) };
+}
+/** Every resource id is its own, and every reference names one of them. */
+function idsResolve(model) {
+  const ids = [...model.matchAll(/<(?:object|basematerials) id="(\d+)"/g)].map((m) => m[1]);
+  assert(new Set(ids).size === ids.length, `resource ids ${ids}: one used twice`);
+  const refs = [...model.matchAll(/(?:objectid|pid)="(\d+)"/g)].map((m) => m[1]);
+  assert(refs.every((id) => ids.includes(id)), `a reference to a missing id: ${refs} of ${ids}`);
+}
+
+Deno.test('plate 3MF: two models, each its part and supports, one shared shift, as they stood', async () => {
+  const a = { partTris: box(-40, -30, -5, 5, 0, 8), finTris: box(-36, -34, -1, 1, 8, 10), name: 'a' };
+  const b = { partTris: box(20, 30, 10, 20, 0, 5), finTris: [], name: 'b' };
+  const { r, model } = await writePlate([a, b]);
+  const items = [...model.matchAll(/<item objectid="(\d+)" transform="([^"]+)"\/>/g)];
+  assert(items.length === 3, `${items.length} build items, want 3 (a, a supports, b)`);
+  assert(new Set(items.map((m) => m[2])).size === 1, 'the items do not share one transform');
+  idsResolve(model);
+  assert(r.objects.map((o) => o.name).join() === 'a,a supports,b', `objects ${r.objects.map((o) => o.name)}`);
+  // the plate's footprint is centred on the bed, and the models keep their spacing
+  const [pa, fa, pb] = r.objects.map((o) => bounds(o.positions));
+  assertClose((pa.lo[0] + pb.hi[0]) / 2, 90, 1e-6, 'x centre');
+  assertClose(pb.lo[0] - pa.lo[0], 60, 1e-6, 'a to b along x');
+  assertClose(pb.lo[1] - pa.lo[1], 15, 1e-6, 'a to b along y');
+  assertClose(fa.lo[0] - pa.lo[0], 4, 1e-6, "a's supports stay over a");
+});
+
+Deno.test('plate 3MF on a known bed: each model where it stands on it, a lone one too', async () => {
+  const a = { partTris: box(-40, -30, -5, 5, 0, 8), finTris: box(-36, -34, -1, 1, 8, 10), name: 'a' };
+  const b = { partTris: box(20, 30, 10, 20, 0, 5), finTris: [], name: 'b' };
+  const bed = { x: 250, y: 210 };
+  const { r } = await writePlate([a, b], { separate: true, bed });
+  const [pa, , pb] = r.objects.map((o) => bounds(o.positions));
+  // the plate's origin is the bed's centre; a slicer's bed counts from its corner
+  assertClose(pa.lo[0], 125 - 40, 1e-6, 'a x');
+  assertClose(pa.lo[1], 105 - 5, 1e-6, 'a y');
+  assertClose(pb.lo[0], 125 + 20, 1e-6, 'b x');
+  // one model moved off the bed's centre keeps its spot (no centring of its footprint)
+  const lone = await writePlate([a], { separate: true, bed });
+  const [pl] = lone.r.objects.map((o) => bounds(o.positions));
+  assertClose(pl.lo[0], 125 - 40, 1e-6, 'lone a x');
+  // and a lone part with no supports too (without a bed it is written as it stands)
+  const bare = await writePlate([{ ...a, finTris: [] }], { separate: true, bed });
+  assertClose(bounds(bare.r.objects[0].positions).lo[0], 125 - 40, 1e-6, 'bare part x');
+});
+
+Deno.test('plate 3MF: colours, interface and slicer parts on both models, each id and config entry its own', async () => {
+  const rgb = Array(12).fill('#FF0000');
+  const one = (dx, name, colour) => ({
+    partTris: at(CUBE, dx), finTris: box(3 + dx, 4 + dx, 0, 1, 0, 1), iface: box(3 + dx, 4 + dx, 0, 1, 1, 1.2), name,
+    colors: { paint: [], rgb: rgb.map(() => colour) },
+    extras: [NEG, MOD].map((e) => ({ ...e, tris: at(triples(e.positions), dx) })),
+  });
+  const { r, parts, model } = await writePlate([one(0, 'left', '#FF0000'), one(20, 'right', '#00FF00')]);
+  idsResolve(model);
+  const tables = [...model.matchAll(/<basematerials id="(\d+)"/g)].map((m) => m[1]);
+  assert(tables.length === 2, `${tables.length} colour tables, want one per model`);
+  // one config for both models, an entry each naming that model's own part
+  const bambu = new TextDecoder().decode(parts.get('Metadata/model_settings.config'));
+  const entries = [...bambu.matchAll(/<object id="(\d+)">.*?<part id="(\d+)" subtype="normal_part">/g)];
+  assert(entries.length === 2 && entries[0][2] !== entries[1][2], `config entries ${entries.map((e) => e.slice(1))}`);
+  const ps3 = JSON.parse(new TextDecoder().decode(parts.get('Metadata/PrusaSlicer3_project.json')));
+  assert(ps3.objects.length === 2 && ps3.objects.map((o) => String(o.id)).join() === entries.map((e) => e[1]).join(),
+    `PrusaSlicer 3 objects ${JSON.stringify(ps3.objects.map((o) => o.id))}`);
+  for (const [name, colour] of [['left', '#FF0000'], ['right', '#00FF00']]) {
+    const p = r.objects.find((o) => o.name === name);
+    assert(p && p.tris === 12 && p.extras.map((e) => e.kind).join() === 'negative,modifier' && p.colors?.rgb[0] === colour,
+      `${name}: ${p?.tris} tris, extras ${p?.extras.map((e) => e.kind)}, colour ${p?.colors?.rgb[0]}`);
+    const s = r.objects.find((o) => o.name === `${name} supports`);
+    assert(s && s.meshes === 2 && s.extras.length === 0, `${name} supports: ${s?.meshes} meshes, ${s?.extras.length} extras`);
+  }
+});
+
+Deno.test('plate 3MF: PrusaSlicer 2 parts on both models, one config with an object each', async () => {
+  const neg = { ...NEG, settings: { prusa2: [] } };
+  const one = (dx, name) => ({ partTris: at(CUBE, dx), finTris: box(3 + dx, 4 + dx, 0, 1, 0, 1), name,
+    extras: [neg].map((e) => ({ ...e, tris: at(triples(e.positions), dx) })) });
+  const { r, parts, model } = await writePlate([one(0, 'left'), one(20, 'right')]);
+  idsResolve(model);
+  const config = new TextDecoder().decode(parts.get('Metadata/Slic3r_PE_model.config'));
+  const objs = [...config.matchAll(/<object id="(\d+)" instances_count="1">/g)].map((m) => m[1]);
+  const meshes = [...model.matchAll(/<object id="(\d+)" type="model" name="(left|right)"/g)].map((m) => m[1]);
+  assert(objs.length === 2 && objs.join() === meshes.join(), `config objects ${objs}, part objects ${meshes}`);
+  for (const name of ['left', 'right']) {
+    const p = r.objects.find((o) => o.name === name);
+    assert(p && p.tris === 12 && p.extras.map((e) => e.kind).join() === 'negative', `${name}: ${p?.tris} tris, extras ${p?.extras.map((e) => e.kind)}`);
+  }
+});
+
+Deno.test('plate 3MF: the locked form keeps several models where they stood too', async () => {
+  const a = { partTris: box(-40, -30, 0, 10, 0, 8), finTris: box(-36, -34, 0, 1, 8, 10), name: 'a' };
+  const b = { partTris: box(20, 30, 0, 10, 0, 5), finTris: [], name: 'b' };
+  const { r, model } = await writePlate([a, b], { separate: false });
+  idsResolve(model);
+  assert(r.objects.length === 2, `${r.objects.length} objects, want 2 (a with its fins, b)`);
+  assertClose(bounds(r.objects[1].positions).lo[0] - bounds(r.objects[0].positions).lo[0], 60, 1e-6, 'a to b along x');
+  const items = [...model.matchAll(/<item objectid="\d+" transform="([^"]+)"\/>/g)];
+  assert(items.length === 2 && items[0][1] === items[1][1], `items ${items.map((m) => m[1])}: want two, one transform`);
+});
+
+Deno.test('plate 3MF: a PrusaSlicer 2 model then a Bambu one, each component its own model\'s', async () => {
+  const one = (dx, name, settings) => ({ partTris: at(CUBE, dx), finTris: box(3 + dx, 4 + dx, 0, 1, 0, 1), name,
+    extras: [{ ...NEG, settings, tris: at(triples(NEG.positions), dx) }] });
+  const { r, model } = await writePlate([one(0, 'left', { prusa2: [] }), one(20, 'right', { bambu: [] })]);
+  idsResolve(model);
+  // the Bambu assembly's components are the right model's part and negative, not the left's
+  const names = new Map([...model.matchAll(/<object id="(\d+)" type="model" name="([^"]+)"/g)].map((m) => [m[1], m[2]]));
+  const asm = model.match(/<object id="\d+" type="model" name="right"><components>(.*?)<\/components>/)[1];
+  const parts = [...asm.matchAll(/objectid="(\d+)"/g)].map((m) => names.get(m[1]));
+  assert(parts.join() === 'right,hole', `the right assembly holds ${parts}`);
+  for (const name of ['left', 'right']) {
+    const p = r.objects.find((o) => o.name === name);
+    assert(p && p.tris === 12 && p.extras.length === 1, `${name}: ${p?.tris} tris, ${p?.extras.length} extras`);
+  }
+});
+
+Deno.test('plate 3MF: PrusaSlicer paint on the second model alone still declares its namespace', async () => {
+  const paint = [{ name: 'slic3rpe:mmu_segmentation', v: '8' }];
+  const { r, model } = await writePlate([{ partTris: CUBE, finTris: [], name: 'a' },
+    { partTris: at(CUBE, 20), finTris: [], name: 'b', colors: { paint, rgb: [] } }]);
+  assert(model.includes('xmlns:slic3rpe='), 'no slic3rpe namespace');
+  assert(r.objects.find((o) => o.name === 'b')?.colors?.paint[0]?.v === '8', 'b lost its paint');
+});
+
+// One model writes the bytes it did before writePlate3MF (sha-256 of origin/main's
+// output for each): a change to the one-model file shows here, not just in the
+// structure the tests above read back.
+Deno.test('3MF one-model output is unchanged (golden)', async () => {
+  const FINS = box(3, 4, 0, 1, 0, 1);
+  const neg = { ...NEG, tris: triples(NEG.positions) };
+  const cases = {
+    locked: [CUBE, FINS, 'cube', {}, '6e0a954cd9732ce65e3a1e2694dbdca8d4cd8054282b39daed379d5f21943d86'],
+    separate: [CUBE, FINS, 'cube', { separate: true, session: { v: 1 } }, '94a2c87a8244ea315905571abe2e7d4dddebf4f08cf29342993727977386d44a'],
+    bare: [CUBE, [], 'cube', { separate: true }, '2b409bf49aba7d0cd8c550cb6a3dfc94c39f61402595c08366b4ae6f6be20dfb'],
+    full: [CUBE, FINS, 'cube', { separate: true, iface: box(3, 4, 0, 1, 1, 1.2), colors: { paint: [], rgb: Array(12).fill('#FF0000') },
+      extras: [neg] }, 'ef89e05cbb339217af6e3383a121bf98f423380caa56f6dad91503f767b16f49'],
+    prusa2: [CUBE, FINS, 'cube', { separate: true, extras: [{ ...neg, settings: { prusa2: [] } }],
+      colors: { paint: [{ name: 'slic3rpe:mmu_segmentation', v: '8' }], rgb: [] } }, '6eb7e99f0dad0e54699ce5083007f47c5f16f3cf3a2d7cbb5596060deaa57fd9'],
+  };
+  for (const [k, [part, fins, name, opts, want]] of Object.entries(cases)) {
+    const d = new Uint8Array(await crypto.subtle.digest('SHA-256', await writeThreeMF(part, fins, name, opts).arrayBuffer()));
+    const got = [...d].map((b) => b.toString(16).padStart(2, '0')).join('');
+    assert(got === want, `${k}: the one-model file changed (${got})`);
+  }
 });
 
 // --- unit: more production-extension shapes --------------------------------

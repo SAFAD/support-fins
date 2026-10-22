@@ -5,7 +5,7 @@
  */
 import * as THREE from 'three';
 import { buildFins, FIN, PAD } from '../fins.js';
-import { PROP } from '../prop.js';
+import { BRACE, PROP } from '../prop.js';
 import { CUT } from '../cutout.js';
 import { nozzle, wallLines } from '../nozzle.js';
 import { el } from './dom.js';
@@ -15,14 +15,16 @@ import {
   removeMode, syncRemoveUI, cancelRemove, clearFinHover, adoptFins, forgetFins,
 } from './remove.js';
 import { updateReadout } from './readout.js';
+import { islands } from './islands.js';
 import {
   drawnTris, drawnMesh, drawMaterial, drawShown, clearPreview, rebuildDrawn,
 } from './walls.js';
 import { finsVisible, finMode, autoLike } from './settings.js';
 import { topology, rotM3, lastResult, updateFit } from './part.js';
+import { scheduleParked } from './parkedbuild.js';
 
 export let finMesh = null;
-let padMesh = null;
+export let padMesh = null;
 export let finTris = [];
 export let padTris = [];
 
@@ -101,17 +103,24 @@ function clearSpinner() {
   el('spinner').classList.remove('show');
 }
 
-function finOpts() {
+/** The build request for the settings on the page; `isl`, the Full coverage island
+ *  starts of the model built (the live one's by default: ui/parkedbuild.js has its
+ *  own). */
+export function finOpts(isl = islands) {
   return { mode: finMode,
            bedPad: el('bed-pad').value !== 'off',
            plateOnly: el('plate-only').checked,
            longWalls: el('long-walls').checked,   // Full coverage only (fins/rows.js)
+           separateWalls: el('separate-walls').checked,   // Full coverage only (#309)
            tallRibs: el('tall-ribs').checked,     // face ribs on tall walls (fins/tall.js)
            // Curved walls (prop/curved.js): Auto and Full only, like sway
            curvedWalls: autoLike() && el('curved-walls').checked ? true : undefined,
            tines: el('tines').checked,
            tineDensity: el('tine-density').valueAsNumber / 100,
            layerHeight: el('layer-height').valueAsNumber,
+           // Full coverage walls the island starts too (fins/fill.js): found here, on
+           // the page, since the Worker's topology has no vertex ids (deleted below)
+           islands: finMode === 'full' ? isl : undefined,
            // Full coverage aims at every reachable overhang: the slider is Auto's
            coverage: finMode === 'full' ? FIN.coverDefault : el('coverage').valueAsNumber / 100,
            // Auto places sway braces itself; in Draw they are clicked on by hand.
@@ -123,6 +132,7 @@ function finOpts() {
            tunables: { padH: FIN.padH,
                        padGrab: PAD.grab, padStyle: PAD.style, padCustom: { ...PAD.custom },
                        propGap: PROP.gap,
+                       tallRibsHeight: BRACE.tallH,
                        cutout: CUT.pattern,
                        iface: PROP.iface,
                        // tine direction (#309): resin pins instead of the comb
@@ -141,10 +151,14 @@ export function swayOpts() {
   return { uncappedDepth: el('full-brace-depth').checked, gripFrom: num('sway-from', 0),
            tineSpacing: num('sway-spacing', 6),
            reach: num('sway-depth', 15) / 100,
+           crossRise: Math.max(10, Math.min(90, num('sway-cross-height', 50))) / 100,
            gap: PROP.gap,
            tines: el('tines').checked,
            iface: PROP.iface,
-           layerHeight: el('layer-height').valueAsNumber };
+           layerHeight: el('layer-height').valueAsNumber,
+           // "Brace tall walls" cross-ribs a brace over its start height, the same
+           // threshold the drawn walls use; unticked leaves the brace plain.
+           crossAbove: el('tall-ribs').checked ? BRACE.tallH : Infinity };
 }
 
 function makeFinWorker() {
@@ -190,6 +204,7 @@ function supersedeBuild() {
 }
 
 export function refreshFins() {
+  scheduleParked();                    // the parked models follow the plate's settings
   if (!finsVisible || !lastResult || !topology) {
     supersedeBuild();                  // no build wanted now: drop any in-flight one so it can't re-add fins
     clearSpinner();
@@ -232,8 +247,7 @@ export function refreshFins() {
   // threw DataCloneError, leaving the build wedged. Send a shallow copy without
   // the cache (the worker rebuilds its own grid), and if a clone ever fails
   // anyway, build inline so the UI can never get stuck waiting on a reply.
-  const topoMsg = { ...topology };
-  delete topoMsg._insideGrid;
+  const topoMsg = workerTopology(topology);
   try {
     worker.postMessage({ id: finGen, topology: topoMsg, result: lastResult, rot: rotM3.elements, opts: lastOpts });
   } catch (err) {
@@ -244,6 +258,15 @@ export function refreshFins() {
     finTris = padTris = [];
     applyBuilt(buildFins(topology, lastResult, rotM3.elements, lastOpts));
   }
+}
+
+/** `topo` as a Worker build takes it: without the page's caches (see refreshFins). */
+export function workerTopology(topo) {
+  const msg = { ...topo };
+  delete msg._insideGrid;
+  delete msg.vid;         // islands.js's too: the engine never reads it (19 MB at 1.5M faces)
+  delete msg._vgraph;     // islands.js's vertex graph: the page's, and big (6 ints a face)
+  return msg;
 }
 
 // Turn a finished buildFins result into meshes + readout. Shared by the worker

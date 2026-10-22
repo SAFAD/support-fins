@@ -88,7 +88,7 @@
        and knows none of these extensions, so it greyed every model out (#237); the
        format is read from the bytes (ui/io.js), not the name. -->
   <label class="btn primary">
-    <span data-i18n="Import">Import</span><input type="file" id="file" accept=".stl,.3mf,.step,.stp,.obj,model/stl,application/sla,application/vnd.ms-pki.stl,model/3mf,application/vnd.ms-package.3dmanufacturing-3dmodel+xml,model/step,application/step,model/obj,application/octet-stream" hidden>
+    <span data-i18n="Import">Import</span><input type="file" id="file" multiple accept=".stl,.3mf,.step,.stp,.obj,model/stl,application/sla,application/vnd.ms-pki.stl,model/3mf,application/vnd.ms-package.3dmanufacturing-3dmodel+xml,model/step,application/step,model/obj,application/octet-stream" hidden>
   </label>
   <label class="field">
     <span class="lbl" data-i18n="Build volume">Build volume</span>
@@ -111,12 +111,17 @@
   <span class="menu-wrap">
     <button class="btn" id="export" aria-haspopup="menu" aria-expanded="false"
             aria-controls="export-menu" data-i18n="Export ▾">Export&nbsp;▾</button>
-    <div class="menu" id="export-menu" role="menu" hidden>
+    <div class="menu" id="export-menu" role="menu" aria-describedby="export-nofins export-clash" hidden>
+      <p class="menu-note" id="export-nofins" hidden></p>
+      <p class="menu-note warn" id="export-clash" hidden data-i18n="Models overlap: the 3MF prints them into each other.">Models overlap: the 3MF prints them into each other.</p>
+      <button role="menuitem" id="export-arrange" hidden data-i18n="Arrange first">Arrange first</button>
       <button role="menuitem" id="export-stl"
               data-i18n-title title="Part and fins merged into one solid.">STL</button>
       <button role="menuitem" id="export-3mf" data-i18n-title title="Part and supports as two separate objects, so the slicer keeps them apart and the tines only touch the part: they snap off cleaner. Opens in place in Bambu Studio, OrcaSlicer and PrusaSlicer; don't Arrange or move one without the other. 'No config, geometry only' is expected.">3MF</button>
       <button role="menuitem" id="export-fins"
               data-i18n-title title="Just the fins and pad, in the part's print position, so they line up if imported beside it." data-i18n="Fins only (STL)">Fins only (STL)</button>
+      <button role="menuitem" id="export-all" hidden
+              data-i18n-title title="Every plate's part and supports, one 3MF each, in one .zip file." data-i18n="All plates (3MF)">All plates (3MF)</button>
     </div>
   </span>
   <!-- Calibration prints (web/ui/calibrate.js): one test print per setting, its
@@ -204,9 +209,24 @@
     <dt><i class="sw sw-pad"></i><span data-i18n="Bed pad">Bed&nbsp;pad</span></dt> <dd id="s-pad">—</dd>
     <dt data-i18n="Analysis">Analysis</dt>                            <dd id="s-time">—</dd>
   </dl>
+  <div class="part-btns">
+  <button type="button" class="btn sm" id="add-part" data-i18n-title
+          title="Put another model on this plate, beside this one. Click a model to edit it."><span data-i18n="Add model">Add model</span></button>
+  <button type="button" class="btn sm" id="remove-part" data-i18n-title
+          title="Take this model off the plate, to import another without reloading the page."><span data-i18n="Remove model">Remove model</span></button>
+  </div>
+  <input type="file" id="file-add" multiple accept=".stl,.3mf,.step,.stp,.obj,model/stl,application/sla,application/vnd.ms-pki.stl,model/3mf,application/vnd.ms-package.3dmanufacturing-3dmodel+xml,model/step,application/step,model/obj,application/octet-stream" hidden>
 </aside>
 
 </div><!-- /left-rail -->
+
+<!-- Plate tabs (ui/plates.js): each plate with its models (ui/models.js), each model
+     with its own pose, settings and walls. + adds an empty plate; × deletes one. -->
+<nav id="plates" aria-label="Plates"></nav>
+<!-- A deleted plate or removed model, with Undo for a few seconds (ui/plates.js). -->
+<!-- Models of this plate collide (ui/arrange.js): red on the bed, and Arrange to hand. -->
+<div id="clash-banner" role="alert" hidden><span data-i18n="Models overlap: they would print into each other.">Models overlap: they would print into each other.</span><button type="button" class="btn sm" id="clash-arrange" data-i18n="Arrange">Arrange</button></div>
+<div id="toast" role="status" hidden><span id="toast-text"></span><button type="button" class="btn sm" id="toast-undo" data-i18n="Undo">Undo</button></div>
 
 <!-- Right rail: the fin options (top, grows down) and the status/receipt card
      (bottom) share ONE fixed scrolling column, exactly like #left-rail, so a tall
@@ -238,14 +258,14 @@
        from the keyboard and the section memory keeps it open or shut. Build volume
        stays in the top bar. ui/settings.js syncSectionSums writes the line. -->
   <details class="sec printer" data-sec="printer">
-    <summary data-i18n-title title="Your printer: nozzle, layer height, support gap, interface material. Click to change.">
+    <summary data-tip-pic="printer" data-i18n-title title="Your printer: nozzle, layer height, support gap, interface material. Click to change.">
       <svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6V2h8v4M3 6h10a1.5 1.5 0 0 1 1.5 1.5V11H12v3H4v-3H1.5V7.5A1.5 1.5 0 0 1 3 6z" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>
       <span class="printer-txt" id="sum-printer"></span>
       <span class="printer-edit"><span class="when-shut" data-i18n="Edit">Edit</span><span class="when-open" data-i18n="Done">Done</span></span>
     </summary>
     <!-- Nozzle: the support widths scale from their 0.4 numbers (web/nozzle.js) so a
          0.6 or 0.8 nozzle doesn't drop the tines or lay the wall as one line. -->
-    <label class="fld row" id="nozzle-fld" data-i18n-title title="Your printer's nozzle diameter. The walls, contact tips and tines are sized in nozzle lines, so they widen for a bigger nozzle and the tines narrow for a smaller one.">
+    <label data-tip-pic="nozzle" class="fld row" id="nozzle-fld" data-i18n-title title="Your printer's nozzle diameter. The walls, contact tips and tines are sized in nozzle lines, so they widen for a bigger nozzle and the tines narrow for a smaller one.">
       <span><span data-i18n="Nozzle">Nozzle</span> <span class="mut">mm</span></span>
       <select id="nozzle">
         <option value="0.2">0.2</option>
@@ -265,11 +285,11 @@
          clean bead and BEND off instead of tearing. That only holds if this matches
          the layer height you actually slice at -- set it wrong and the tines slice
          into ~1.5 layers and leave welts. Shown only when Tines is on. -->
-    <label class="fld row" id="layerh-fld" data-i18n-title title="Set this to the layer height you slice at. The grip tines are one layer tall so they snap off clean; if this doesn't match your slicer, the tines tear and leave marks. Default 0.2mm.">
+    <label data-tip-pic="layer-height" class="fld row" id="layerh-fld" data-i18n-title title="Set this to the layer height you slice at. The grip tines are one layer tall so they snap off clean; if this doesn't match your slicer, the tines tear and leave marks. Default 0.2mm.">
       <span><span data-i18n="Layer height">Layer height</span> <span class="mut">mm</span></span>
       <input type="number" id="layer-height" min="0.08" max="0.6" step="0.04" value="0.2">
     </label>
-    <label data-i18n-title class="fld row" title="Clearance between a support top and the part. Bigger = cleaner surface / easier removal; too big stops holding the overhang. Default 0.2mm.">
+    <label data-i18n-title class="fld row" data-tip-pic="gap" title="Clearance between a support top and the part. Bigger = cleaner surface / easier removal; too big stops holding the overhang. Default 0.2mm.">
       <span><span data-i18n="Support gap">Support gap</span> <span class="mut">mm</span></span>
       <input type="number" id="gap" min="0.1" max="0.4" step="0.05" value="0.2">
     </label>
@@ -278,7 +298,7 @@
          to print in a material that won't bond to the part (PETG under PLA). Flat
          contacts only by default: on a tilted underside the band climbs every layer,
          and PETG wouldn't print on the narrow PLA tip (a 35deg cube). -->
-    <label class="fld row" data-i18n-title title="For a printer with two or more toolheads. The top layer of a wall exports as its own part of the supports, shown purple: give it a material that won't bond to the part (PETG under PLA) for a clean release. Flat contacts: only under flat undersides, where it works and costs a few tool changes. Everywhere: every wall top and the tines too, a tool change every layer on a tilted part. 3MF only.">
+    <label data-tip-pic="iface" class="fld row" data-i18n-title title="For a printer with two or more toolheads. The top layer of a wall exports as its own part of the supports, shown purple: give it a material that won't bond to the part (PETG under PLA) for a clean release. Flat contacts: only under flat undersides, where it works and costs a few tool changes. Everywhere: every wall top and the tines too, a tool change every layer on a tilted part. 3MF only.">
       <span data-i18n="Interface material">Interface material</span>
       <select id="iface">
         <option value="off" data-i18n="Off">Off</option>
@@ -322,7 +342,7 @@
        just stands under the overhang and snaps off. Same fin, tines or no tines. -->
   <details class="sec" data-sec="tines" open>
     <summary>
-      <label data-i18n-title class="check sec-title" title="Tines fuse the support to the part so it grips instead of just propping. Off = plain breakaway wall.">
+      <label data-i18n-title class="check sec-title" data-tip-pic="tines" title="Tines fuse the support to the part so it grips instead of just propping. Off = plain breakaway wall.">
         <input type="checkbox" id="tines" checked><span data-i18n="Tines">Tines</span> <span class="mut" data-i18n="grip the part">grip the part</span>
       </label>
       <span class="sec-sum" id="sum-tines"></span>
@@ -332,16 +352,21 @@
          floor keeps at least a few tines so it still holds; Firm = a dense comb (max grip)
          for a tippy or tall part, at the cost of more marks on the supported face.
          Shown only when Tines is on. -->
-    <label class="fld" id="tinegrip-fld"
-           data-i18n-title title="How tightly to space the grip tines. Light = fewest marks (default), a per-wall floor keeps grip; Firm = dense comb / max grip for a tippy or tall part.">
-      <span><span data-i18n="Tine grip">Tine grip</span> <span class="mut"><span data-i18n="light">light</span> ⟶ <span data-i18n="firm">firm</span></span></span>
+    <!-- no data-i18n-title: syncTineGrip (ui/settings.js) owns and translates this
+         title, which swaps for the pins' one in resin mode -->
+    <label data-tip-pic="tine-density" class="fld" id="tinegrip-fld"
+           title="How tightly to space the grip tines. Light = fewest marks (default), a per-wall floor keeps grip; Firm = dense comb / max grip for a tippy or tall part.">
+      <span class="grip-tines"><span data-i18n="Tine grip">Tine grip</span> <span class="mut"><span data-i18n="light">light</span> ⟶ <span data-i18n="firm">firm</span></span></span>
+      <!-- Vertical (resin) pins: the same slider only spaces the pins (prop/pins.js
+           takes the comb's step); more pins, not deeper ones, hold harder (#309). -->
+      <span class="grip-pins" hidden><span data-i18n="Pins per wall">Pins per wall</span> <span class="mut"><span data-i18n="fewer">fewer</span> ⟶ <span data-i18n="more">more</span></span></span>
       <input type="range" id="tine-density" min="0" max="100" step="5" value="0">
     </label>
     <!-- Tine direction (GitHub #309): horizontal tines are FDM's; a resin print is
          peeled off the vat every layer, so its supports must be attached -- vertical
          pins up across the gap and into the part (prop/pins.js), and a wall on the
          part welds its foot. Untested on a resin printer. -->
-    <label class="fld row" id="tinedir-fld"
+    <label data-tip-pic="tine-dir" class="fld row" id="tinedir-fld"
            data-i18n-title title="Horizontal: one-layer tines that grip the part and snap off clean (FDM). Vertical: pins that stand up from each wall into the part, like a resin slicer's contact tips, for resin printers, where every support has to be attached.">
       <span data-i18n="Direction">Direction</span>
       <select id="tine-dir">
@@ -349,10 +374,10 @@
         <option value="vertical" data-i18n="Vertical (resin)">Vertical (resin)</option>
       </select>
     </label>
-    <label class="fld row" id="pindepth-fld" hidden
-           data-i18n-title title="How far each pin sinks into the part, like a resin slicer's contact depth. Deeper holds harder and leaves a bigger mark. Default 0.3 mm.">
+    <label data-tip-pic="pin-depth" class="fld row" id="pindepth-fld" hidden
+           data-i18n-title title="How far each pin sinks into the part, like a resin slicer's contact depth. Resin slicers sink a tip 0-0.2 mm; deeper leaves a bigger mark and is harder to snap off. Default 0.1 mm.">
       <span data-i18n="Pin depth">Pin depth</span>
-      <input type="number" id="pin-depth" min="0.05" max="1" step="0.05" value="0.3">
+      <input type="number" id="pin-depth" min="0.05" max="1" step="0.05" value="0.1">
     </label>
     <p class="hint" id="resin-note" hidden data-i18n="Not tested on a resin printer yet. Tell us how it prints on GitHub issue #309.">Not tested on a resin printer yet. Tell us how it prints on GitHub issue #309.</p>
   </details>
@@ -364,26 +389,27 @@
          save filament. Every hole has a pointed roof (>=45deg) so nothing bridges;
          the contact top, foot and ends stay solid, and a wall too short for a hole
          stays solid. Tined side fins are not cut -- their tines anchor all over. -->
-    <label data-i18n-title class="fld row" title="Cut holes through tall breakaway walls to save filament. The top edge that holds the part, the foot, and the wall's ends stay solid, and every hole has a pointed roof so it prints without bridging. Short walls stay solid.">
+    <label data-tip-pic="cutout" data-i18n-title class="fld row" title="Cut holes through tall breakaway walls to save filament. The top edge that holds the part, the foot, and the wall's ends stay solid, and every hole has a pointed roof so it prints without bridging. Short walls stay solid.">
       <span data-i18n="Cutouts">Cutouts</span><select id="cutout">
         <option value="none" data-i18n="None">None</option>
         <option value="diamond" data-i18n="Diamond">Diamond</option>
         <option value="triangle" data-i18n="Triangle">Triangle</option>
         <option value="arch" data-i18n="Arch">Arch</option>
         <option value="lattice" data-i18n="Lattice">Lattice</option>
+        <option value="honeycomb" data-i18n="Honeycomb">Honeycomb</option>
       </select>
     </label>
     <!-- Suggest + Draw mix: place extra walls by hand where auto-placement missed.
          Shown only in Suggest mode (toggled in ui/settings.js). Per-fin removal (Auto only,
          shown via ui/remove.js syncRemoveUI): arm a click-to-remove mode, hover lights a
          fin red, click drops just that one; Restore all brings every one back. -->
-    <button data-i18n-title class="btn sm" id="augment-toggle" hidden data-search="Add walls by hand"
+    <button data-tip-pic="add-walls" data-i18n-title class="btn sm" id="augment-toggle" hidden data-search="Add walls by hand"
             data-i18n-title title="Place extra breakaway walls by hand, on top of the auto-placed ones.">+ Add walls by hand</button>
     <div id="remove-fins-controls" hidden>
       <div class="draw-btns">
-        <button class="btn sm" id="remove-fins-toggle" hidden data-search="Remove fins"
+        <button data-tip-pic="remove-fins" class="btn sm" id="remove-fins-toggle" hidden data-search="Remove fins"
                 data-i18n-title title="Click a fin to remove just that one. Esc or right-click cancels."><span data-i18n="Remove fins">Remove fins</span></button>
-        <button class="btn sm" id="restore-fins" hidden data-i18n-title
+        <button data-tip-pic="restore-fins" class="btn sm" id="restore-fins" hidden data-i18n-title
                 title="Bring back every fin removed in this orientation."><span data-i18n="Restore all">Restore all</span></button>
       </div>
     </div>
@@ -393,9 +419,9 @@
        hint and Clear can never be collapsed away mid-draw. Hint text is set per
        mode in ui/walls.js (syncDrawControls). -->
   <div id="draw-controls" hidden>
-    <p class="draw-hint" id="draw-hint" data-i18n-html="Click an <strong>overhang face</strong> — it lights up green when a fin can go there — to stand a support fin against it.">Click an <strong>overhang face</strong> — it lights up green when a fin can go there — to stand a support fin against it.</p>
+    <p class="draw-hint" id="draw-hint" data-i18n-html="Click two points across an overhang — straight onto the red faces — to lay a breakaway wall along that line. Hover an upright side to preview a sway brace: its top follows the cursor, and near the top of the side it runs full height. Click to stand it. Esc or right-click cancels.">Click two points across an overhang — straight onto the red faces — to lay a breakaway wall along that line. Hover an upright side to preview a sway brace: its top follows the cursor, and near the top of the side it runs full height. Click to stand it. Esc or right-click cancels.</p>
     <div class="draw-btns">
-      <button class="btn sm" id="draw-remove" hidden data-i18n-title
+      <button data-tip-pic="draw-remove" class="btn sm" id="draw-remove" hidden data-i18n-title
               title="Remove the support you clicked (Delete or Backspace also works)."><span data-i18n="Remove selected">Remove selected</span></button>
       <button class="btn sm" id="draw-clear"><span data-i18n="Clear all">Clear all</span></button>
     </div>
@@ -415,7 +441,7 @@
     <summary><span class="sec-title" data-i18n="More settings">More settings</span><span class="sec-sum more-count" id="more-count"></span></summary>
     <div class="group">
       <h5 data-i18n="Hold the part">Hold the part</h5>
-      <label data-i18n-title class="fld row" title="A tilted part rests on an edge and peels off the plate without a pad. Auto: Light, or Sure hold when the part meets the plate on a point or a small round foot (it shows which). Light: one layer, 0.12mm off the part, peels off like a brim. Sure hold: thicker and tacked into the part, holds harder but is harder to remove. Custom: set every number yourself.">
+      <label data-tip-pic="bed-pad" data-i18n-title class="fld row" title="A tilted part rests on an edge and peels off the plate without a pad. Auto: Light, or Sure hold when the part meets the plate on a point or a small round foot (it shows which). Light: one layer, 0.12mm off the part, peels off like a brim. Sure hold: thicker and tacked into the part, holds harder but is harder to remove. Custom: set every number yourself.">
         <span data-i18n="Bed pad">Bed pad</span><select id="bed-pad">
           <option value="off" data-i18n="Off">Off</option>
           <option value="auto" selected data-i18n="Auto">Auto</option>
@@ -424,25 +450,25 @@
           <option value="custom" data-i18n="Custom">Custom</option>
         </select>
       </label>
-      <label data-i18n-title class="fld row" data-pad-custom hidden title="How tall the pad is. Only the first layer grips the plate; more layers make it stiffer and harder to peel.">
+      <label data-tip-pic="pad-h" data-i18n-title class="fld row" data-pad-custom hidden title="How tall the pad is. Only the first layer grips the plate; more layers make it stiffer and harder to peel.">
         <span><span data-i18n="Pad thickness">Pad thickness</span> <span class="mut">mm</span></span>
         <input type="number" id="pad-h" min="0.1" max="1.0" step="0.05" value="0.2">
       </label>
-      <label class="fld row" data-pad-custom hidden data-i18n-title title="Sideways clearance between the pad and the part's first layer. 0.12mm lets first-layer squish just close it, the way a slicer brim holds; bigger comes off easier and holds less. Under 0.1mm most slicers merge the gap and the pad welds on. 0 = no gap (Pad grip decides).">
+      <label data-tip-pic="pad-gap" class="fld row" data-pad-custom hidden data-i18n-title title="Sideways clearance between the pad and the part's first layer. 0.12mm lets first-layer squish just close it, the way a slicer brim holds; bigger comes off easier and holds less. Under 0.1mm most slicers merge the gap and the pad welds on. 0 = no gap (Pad grip decides).">
         <span><span data-i18n="Pad gap">Pad gap</span> <span class="mut">mm</span></span>
         <input type="number" id="pad-gap" min="0" max="0.5" step="0.01" value="0.12">
       </label>
-      <label data-i18n-title class="fld row" data-pad-custom hidden title="Where the pad meets the part's underside. Positive bites in to hold harder; 0 is flush; negative leaves a gap that snaps off cleaner.">
+      <label data-tip-pic="pad-grip" data-i18n-title class="fld row" data-pad-custom hidden title="Where the pad meets the part's underside. Positive bites in to hold harder; 0 is flush; negative leaves a gap that snaps off cleaner.">
         <span><span data-i18n="Pad grip">Pad grip</span> <span class="mut">mm</span></span>
         <input type="number" id="pad-grip" min="-0.2" max="0.3" step="0.05" value="0">
       </label>
-      <label data-i18n-title class="fld row" data-pad-custom hidden title="How far the pad spreads past the part's contact with the plate. More spread = more plate grip.">
+      <label data-tip-pic="pad-margin" data-i18n-title class="fld row" data-pad-custom hidden title="How far the pad spreads past the part's contact with the plate. More spread = more plate grip.">
         <span><span data-i18n="Pad spread">Pad spread</span> <span class="mut">mm</span></span>
         <input type="number" id="pad-margin" min="1" max="12" step="0.5" value="4">
       </label>
       <!-- Wall lines (web/nozzle.js, after #210): lines across a wall, for a tall part
            or a big printer. 2 is the tuned wall; the tip and tines stay one line. -->
-      <label data-i18n-title class="fld row" title="How many nozzle lines thick the walls, wedges and sway braces are. 2 is the standard wall. More lines make stiffer supports for tall parts. The contact tip and tines stay one line wide, so the supports still break off the same way.">
+      <label data-tip-pic="wall-lines" data-i18n-title class="fld row" title="How many nozzle lines thick the walls, wedges and sway braces are. 2 is the standard wall. More lines make stiffer supports for tall parts. The contact tip and tines stay one line wide, so the supports still break off the same way.">
         <span data-i18n="Wall lines">Wall lines</span><select id="wall-lines">
           <option value="2" selected>2</option>
           <option value="4">4</option>
@@ -455,26 +481,34 @@
       <h5 data-i18n="Tall parts">Tall parts</h5>
       <!-- Brace tall walls (local issue 046, fins/tall.js + draw.js braceTall): face ribs
            at the plate on every wall over BRACE.tallH, Auto's and drawn. On by default. -->
-      <label data-i18n-title class="check" title="Walls taller than 10 cm get triangular ribs at the plate, off both faces, so they don't sway as they print. Untick for plain walls.">
+      <label data-tip-pic="tall-ribs" data-i18n-title class="check" title="Walls taller than the selected height get triangular ribs at the plate, off both faces, so they don't sway as they print. Untick for plain walls.">
         <input type="checkbox" id="tall-ribs" checked><span data-i18n="Brace tall walls">Brace tall walls</span>
       </label>
-      <label data-i18n-title class="check" title="Stand tapered buttress ribs against the upright sides of a tall part, tied on with tines all the way up, so it doesn't drift or wobble as it grows. In Draw, click an upright side to add one.">
+      <label data-tip-pic="tall-ribs-height" data-i18n-title class="fld row" id="tall-ribs-height-fld" title="Walls taller than this height get face ribs. 5 cm or more; default 10 cm.">
+        <span><span data-i18n="Brace walls above">Brace walls above</span> <span class="mut">cm</span></span>
+        <input type="number" id="tall-ribs-height" min="5" max="200" step="0.1" value="10">
+      </label>
+      <label data-i18n-title class="check" data-tip-pic="sway" title="Stand tapered buttress ribs against the upright sides of a tall part, tied on with tines all the way up, so it doesn't drift or wobble as it grows. Hover an upright side to preview one, and click to add it.">
         <input type="checkbox" id="sway"><span data-i18n="Sway braces">Sway braces</span>
       </label>
-      <label data-i18n-title class="fld row" id="sway-from-fld" title="Height the brace tines start at. 0 = grip the whole height; raise it to tie on only above where the part starts to move.">
+      <label data-i18n-title class="fld row" id="sway-from-fld" data-tip-pic="sway-from" title="Height the brace tines start at. 0 = grip the whole height; raise it to tie on only above where the part starts to move.">
         <span><span data-i18n="Brace grip from">Brace grip from</span> <span class="mut" data-i18n="mm up">mm up</span></span>
         <input type="number" id="sway-from" min="0" max="2000" step="5" value="0">
       </label>
-      <label data-i18n-title class="fld row" id="sway-spacing-fld" title="Vertical distance between brace tines. Smaller = held tighter, more marks on the side. Default 6mm.">
+      <label data-i18n-title class="fld row" id="sway-spacing-fld" data-tip-pic="sway-spacing" title="Vertical distance between brace tines. Smaller = held tighter, more marks on the side. Default 6mm.">
         <span><span data-i18n="Brace tine spacing">Brace tine spacing</span> <span class="mut">mm</span></span>
         <input type="number" id="sway-spacing" min="2" max="30" step="1" value="6">
       </label>
-      <label data-i18n-title class="fld row" id="sway-depth-fld" title="How far the brace reaches out at the bed, as a share of its height. Deeper = stiffer, more plastic. Default 15%.">
+      <label data-i18n-title class="fld row" id="sway-depth-fld" data-tip-pic="sway-depth" title="How far the brace reaches out at the bed, as a share of its height. Deeper = stiffer, more plastic. Default 15%.">
         <span><span data-i18n="Brace depth">Brace depth</span> <span class="mut" data-i18n="% of height">% of height</span></span>
         <input type="number" id="sway-depth" min="5" max="50" step="1" value="15">
       </label>
-      <label data-i18n-title class="fld row" id="full-brace-depth-fld" title="Use the selected Brace depth percentage beyond the usual 60 mm limit. Larger braces need more plate space and material; collisions can shorten or refuse them. Off keeps the 60 mm limit.">
+      <label data-tip-pic="full-brace-depth" data-i18n-title class="fld row" id="full-brace-depth-fld" title="Use the selected Brace depth percentage beyond the usual 60 mm limit. Larger braces need more plate space and material; collisions can shorten or refuse them. Off keeps the 60 mm limit.">
         <span data-i18n="Full brace depth">Full brace depth</span><input type="checkbox" id="full-brace-depth">
+      </label>
+      <label data-tip-pic="sway-cross-height" data-i18n-title class="fld row" id="sway-cross-height-fld" title="Cross-rib height as a percentage of sway brace height. 10–90%, default 50%. Requires Brace tall walls and the brace to exceed its start height. Does not change the horizontal reach.">
+        <span><span data-i18n="Cross-rib height">Cross-rib height</span> <span class="mut" data-i18n="% of height">% of height</span></span>
+        <input type="number" id="sway-cross-height" min="10" max="90" step="1" value="50">
       </label>
     </div>
     <div class="group">
@@ -484,7 +518,7 @@
            This sets the row pitch: Sparse = fewer fins / less plastic, Dense = more.
            A floor keeps at least one brace so a wide face is never left bare. Only
            bites on a broad face; narrow parts keep their 2-corner bracing. Auto only. -->
-      <label data-i18n-title class="fld" id="coverage-fld"
+      <label data-tip-pic="coverage" data-i18n-title class="fld" id="coverage-fld"
              title="How densely to line a WIDE overhang face with fins. The middle is the anti-sag default; drag LEFT for fewer fins (a small part can go down to one — the readout warns if a broad face then risks sagging), RIGHT for more support. Narrow parts are unaffected.">
         <span><span data-i18n="Wide-face coverage">Wide-face coverage</span> <span class="mut"><span data-i18n="sparse">sparse</span> ⟶ <span data-i18n="dense">dense</span></span></span>
         <input type="range" id="coverage" min="0" max="100" step="5" value="50">
@@ -492,26 +526,39 @@
       <!-- Plate only (#218): every support stands on the build plate, none on the part
            itself. An overhang with part under it is left bare and the readout says how
            many; Draw refuses a line over the part with the reason. -->
-      <label data-i18n-title class="check" title="Stand every support on the build plate, never on the part itself. An overhang with part under it is left unsupported, and the readout says how many.">
+      <label data-tip-pic="plate-only" data-i18n-title class="check" title="Stand every support on the build plate, never on the part itself. An overhang with part under it is left unsupported, and the readout says how many.">
         <input type="checkbox" id="plate-only"><span data-i18n="Plate only">Plate only</span>
+      </label>
+      <!-- Separate walls (Full coverage, and Auto's Curved walls fill; #309, fins/fill.js
+           `separateWalls`): no
+           fill wall crosses another or joins its flange. Ticks and unticks itself with
+           the tine Direction (resin cures joined walls into one block); the user can
+           override it after. -->
+      <label data-tip-pic="separate-walls" data-i18n-title class="check" id="separate-walls-fld" hidden title="Full coverage lets a wall cross another or share its base on the plate, so a crowded part peels off as one support. Tick to keep every wall apart: a resin print cures joined walls into one block that won't break away. Ticks itself for Vertical (resin) tines. Thin ties between tall walls stay: they snap. Can leave a little more overhang bare.">
+        <input type="checkbox" id="separate-walls"><span data-i18n="Separate walls">Separate walls</span>
       </label>
       <!-- Long walls (Full coverage only, fins/rows.js): rows of long walls along the
            part's length before the patch-by-patch fill. On by default; untick for the
            patch fill alone (shorter walls, less plastic). -->
-      <label data-i18n-title class="check" id="long-walls-fld" hidden title="Full coverage lays rows of long walls along the part's length first, the way you'd draw them by hand, then fills what they miss. Holds more of the overhang and uses more plastic. Untick for short walls under each overhang patch.">
+      <label data-tip-pic="long-walls" data-i18n-title class="check" id="long-walls-fld" hidden title="Full coverage lays rows of long walls along the part's length first, the way you'd draw them by hand, then fills what they miss. Holds more of the overhang and uses more plastic. Untick for short walls under each overhang patch.">
         <input type="checkbox" id="long-walls" checked><span data-i18n="Long walls">Long walls</span> <span class="mut" data-i18n="along the part">along the part</span>
       </label>
       <!-- Curved walls (#25, prop/curved.js): a bending downhill wall wins its region
            when it holds as much as the straight walls, whatever it weighs. Off by
            default; Auto and Full only (hidden in Draw, ui/settings.js). -->
-      <label data-i18n-title class="check" id="curved-walls-fld" title="Let the walls under a curved overhang bend with it down to the plate wherever they can, even at more plastic. Extra walls cover what the curves miss. Auto and Full coverage only.">
+      <label data-tip-pic="curved-walls" data-i18n-title class="check" id="curved-walls-fld" title="Let the walls under a curved overhang bend with it down to the plate wherever they can, even at more plastic. Extra walls cover what the curves miss. Auto and Full coverage only.">
         <input type="checkbox" id="curved-walls"><span data-i18n="Curved walls">Curved walls</span> <span class="mut" data-i18n="follow the curve, more plastic">follow the curve, more plastic</span>
       </label>
     </div>
     <div class="group">
       <h5 data-i18n="Display">Display</h5>
-      <label class="check" data-i18n-title title="Shade overhangs too small for a fin amber, with a card saying they print unsupported. Off drops the highlight and the card; the readout still counts them.">
+      <label data-tip-pic="highlight-small" class="check" data-i18n-title title="Shade overhangs too small for a fin amber, with a card saying they print unsupported. Off drops the highlight and the card; the readout still counts them.">
         <input type="checkbox" id="highlight-small" checked><span data-i18n="Highlight small overhangs">Highlight small overhangs</span>
+      </label>
+      <!-- Island starts (ui/islands.js, local issue 041): the red cones only; the
+           readout count and the card stay either way. -->
+      <label data-tip-pic="show-islands" class="check" data-i18n-title title="Draw a red cone under each spot whose first layer starts in midair. Off hides the cones; the readout and the card still count them.">
+        <input type="checkbox" id="show-islands"><span data-i18n="Show midair starts">Show midair starts</span>
       </label>
     </div>
   </details>
@@ -532,6 +579,7 @@
   <p class="note" id="s-flat-note"></p>
   <p class="note" id="s-fin-note"></p>
   <p class="over-warn" id="over-warn"></p>
+  <p class="over-warn island-warn" id="island-warn"></p>
   <div id="receipt" hidden>
     <span id="r-grams">—</span>
     <span class="r-unit" data-i18n="of support material added">of support material added</span>
@@ -568,6 +616,14 @@
   <!-- The angle while the rings turn the part with Rotate folded (ui/pose.js):
        above the Rotate badge, fading out after the drag. Read-only. -->
   <div class="vb-pop vb-tip" id="drag-angle"><span id="drag-delta"></span><span id="drag-now"></span></div>
+  <!-- Scale (ui/scale.js): one uniform percent and Reset. The size it gives is the
+       stats card's Size row; the badge carries the percent while it isn't 100. -->
+  <div class="vb-pop" id="scale-pop" hidden>
+    <div class="vb-row"><label class="lbl" for="scale-pct" data-i18n="Scale">Scale</label>
+      <input type="number" id="scale-pct" min="10" max="1000" step="any" value="100">%
+      <button class="btn sm" id="scale-reset" disabled><span data-i18n="Reset">Reset</span></button></div>
+    <p class="hint" data-i18n="A new scale clears drawn walls, removed fins and undo.">A new scale clears drawn walls, removed fins and undo.</p>
+  </div>
   <!-- Suggest orientation (ui/suggest.js): ranks on its button, never on opening;
        the list stays until a new part, undo or reset clears it. -->
   <div class="vb-pop wide" id="suggest-pop" hidden>
@@ -596,9 +652,10 @@
     <p class="load-verdict" id="load-note" hidden></p>
     <button class="btn sm" id="load-suggest" hidden data-i18n="Turn to the strongest printable pose">Turn to the strongest printable pose</button>
   </div>
-  <!-- View: the Mouse preset (#53, ui/navigation.js) and the print layers around
-       the part. Camera views join it later. -->
+  <!-- View: the camera views (#350, ui/camviews.js), the Mouse preset (#53,
+       ui/navigation.js) and the print layers around the part. -->
   <div class="vb-pop" id="view-pop" hidden>
+    <div class="vb-row" role="group" aria-label="Camera view" id="cam-views"></div>
     <div class="vb-row navview"><label class="nav-pick"><span data-i18n="Mouse">Mouse</span> <select id="nav-preset"
         aria-describedby="nav-hint"></select></label>
     <p class="hint" id="nav-hint"></p></div>
@@ -620,12 +677,28 @@
     <button type="button" class="btn sm" id="section-reset" data-i18n-title data-i18n="Re-aim"
             title="Aim the cut at the current view again, through the part's centre.">Re-aim</button>
   </div>
+  <!-- View cube (#350, ui/viewcube.js): turns with the camera; click a face, edge or
+       corner to look from there, drag to orbit. The View popover's buttons are the
+       keyboard way to the same views. -->
+  <div id="viewcube">
+    <div class="vc-stage" aria-hidden="true"><div class="vc-cube"></div></div>
+    <div class="vc-side">
+      <button type="button" class="vc-home"><svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 7.5 8 2.5l6 5M3.8 6.2V13.5h3V10h2.4v3.5h3V6.2" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg></button>
+      <svg class="vc-axes" viewBox="0 0 32 32" aria-hidden="true"></svg>
+    </div>
+  </div>
   <div class="vb-badges" role="toolbar" aria-label="View tools">
     <button type="button" class="vb-badge icon" id="undo" data-i18n-title title="Undo (⌘/Ctrl+Z)" disabled><svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M5 3 1.5 6.5 5 10M2 6.5h7.5a4 4 0 0 1 0 8H7" fill="none" stroke="currentColor" stroke-width="1.4"/></svg></button>
     <button type="button" class="vb-badge icon" id="redo" data-i18n-title title="Redo (⇧⌘/Ctrl+Shift+Z)" disabled><svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M11 3l3.5 3.5L11 10M14 6.5H6.5a4 4 0 0 0 0 8H9" fill="none" stroke="currentColor" stroke-width="1.4"/></svg></button>
     <span class="vb-sep" aria-hidden="true"></span>
+    <button type="button" class="vb-badge" id="move-badge" aria-pressed="false" data-i18n-title
+            title="Move models on the plate: drag one to place it (M). Esc to stop."><svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5v13M1.5 8h13M6 3.5 8 1.5l2 2M6 12.5l2 2 2-2M3.5 6 1.5 8l2 2M12.5 6l2 2-2 2" fill="none" stroke="currentColor" stroke-width="1.3"/></svg><span data-i18n="Move">Move</span></button>
+    <button type="button" class="vb-badge" id="arrange-btn" hidden data-i18n-title
+            title="Pack this plate's models apart on the bed, biggest in the middle. Undo puts them back."><svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M1.5 1.5h6v6h-6zM9.5 1.5h5v4h-5zM9.5 7.5h5v7h-5zM1.5 9.5h6v5h-6z" fill="none" stroke="currentColor" stroke-width="1.3"/></svg><span data-i18n="Arrange">Arrange</span></button>
     <button type="button" class="vb-badge" id="rotate-badge" aria-expanded="false" data-i18n-title
             title="Turn the part: 90° steps, Reset, Lay a face flat and the rotate rings."><svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M13.5 8A5.5 5.5 0 1 1 11 3.4" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M9.5 1.5 12 3.5 9.8 5.8" fill="none" stroke="currentColor" stroke-width="1.4"/></svg><span data-i18n="Rotate">Rotate</span></button>
+    <button type="button" class="vb-badge" id="scale-badge" aria-expanded="false" data-i18n-title
+            title="Scale the part by a percent."><svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 7.5V14h6.5" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M6 10 14 2M9 2h5v5" fill="none" stroke="currentColor" stroke-width="1.4"/></svg><span data-i18n="Scale">Scale</span><span id="scale-now"></span></button>
     <button type="button" class="vb-badge" id="suggest-badge" aria-expanded="false" data-i18n-title
             title="Rank the ways this part could sit on the bed."><svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5l1.7 3.9 4.2.4-3.2 2.8.9 4.1L8 10.6l-3.6 2.1.9-4.1-3.2-2.8 4.2-.4z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg><span data-i18n="Suggest">Suggest</span></button>
     <button type="button" class="vb-badge" id="strength-badge" aria-expanded="false" data-i18n-title
@@ -633,7 +706,7 @@
     <button type="button" class="vb-badge" id="section" aria-pressed="false" aria-expanded="false" data-i18n-title
             title="Cut the view with a plane to see and draw inside the part. Drag the arrow or the sheet (or Shift + scroll) to push the cut, the rings to tilt it. Click again to turn it off. View only: the export is whole."><svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 3.5h7.5v9H2z" fill="currentColor" opacity=".35"/><path d="M9.5 1.5v13M2 3.5h12v9H2z" fill="none" stroke="currentColor" stroke-width="1.3"/></svg><span data-i18n="Section">Section</span></button>
     <button type="button" class="vb-badge" id="view-badge" aria-expanded="false" data-i18n-title
-            title="The mouse preset and the print layers around the part."><svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M1.5 8S4 3.5 8 3.5 14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8z" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="8" cy="8" r="2" fill="currentColor"/></svg><span data-i18n="View">View</span></button>
+            title="Camera views, the mouse preset and the print layers around the part."><svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M1.5 8S4 3.5 8 3.5 14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8z" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="8" cy="8" r="2" fill="currentColor"/></svg><span data-i18n="View">View</span></button>
   </div>
 </div>
 
@@ -649,6 +722,12 @@
     <p class="small" data-i18n="Opening the 3MF, Bambu Studio and PrusaSlicer may note it has “no config” and load the geometry only — that’s expected. The file is pure geometry with no slicer profile baked in, so it opens the same in every slicer; your part comes in correctly oriented and sized. Just slice with supports off.">Opening the 3MF, Bambu Studio and PrusaSlicer may note it has “no config” and load the geometry only — that’s expected. The file is pure geometry with no slicer profile baked in, so it opens the same in every slicer; your part comes in correctly oriented and sized. Just slice with supports off.</p>
     <p class="small" data-i18n="Nothing is uploaded. The file is read inside this tab and never leaves your machine.">Nothing is uploaded. The file is read inside this tab and never leaves your machine.</p>
     <p class="kofi-line"><span data-i18n="Free and open source. If it ever saves you a print,">Free and open source. If it ever saves you a print,</span> <a class="kofi" href="https://ko-fi.com/matthewtrahan" target="_blank" rel="noopener"><span data-i18n="buy me a coffee ☕">buy me a coffee ☕</span></a>.</p>
+  </div>
+  <!-- Once a part has been loaded, an empty plate (Remove model) and a drag show
+       just this over the bare plate: the intro is for a first visit (#drop.compact). -->
+  <div class="empty">
+    <button type="button" class="btn primary" id="empty-import" data-i18n="Import a model">Import a model</button>
+    <p class="small" data-i18n="or drop it anywhere on the page">or drop it anywhere on the page</p>
   </div>
 </div>
 
@@ -674,6 +753,9 @@
 
 <!-- onerror: a module that fails to LOAD (blocked, offline, 404) fires here, not on
      window -- the import graph fails as a whole and says nothing else -->
+<!-- Draw: the sway brace a click on the side under the cursor would stand (ui/walls.js
+     updateBracePreview) -- its height, or why it can't. Follows the pointer, never takes a click. -->
+<div id="brace-tip" role="status"></div>
 <script type="module" src="./app.js" onerror="window.__sfError && __sfError('A script did not load (blocked by the browser or an extension, or offline). Nothing on the page will work.')"></script>
 </body>
 </html>
