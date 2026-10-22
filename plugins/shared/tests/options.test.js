@@ -34,7 +34,7 @@ function siteControl(id) {
 // With `percent`, the site shows the entry's value x 100.
 const fromSite = (o, v) => (o.percent ? Number(v) / 100 : Number(v));
 // Options the site shows that a plugin dialog deliberately leaves out (options.json $comment).
-const SITE_ONLY_CHOICES = { padStyle: ['custom'], mode: ['draw'] };
+const SITE_ONLY_CHOICES = { padStyle: ['custom'], mode: ['contour', 'draw'] };
 // Every site control that is NOT in options.json, and why. A new control on the site
 // fails the test below until it is added to the schema or listed here.
 const SITE_EXCLUDED = {

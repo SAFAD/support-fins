@@ -5,7 +5,7 @@
     "default/min/max/step: in the ENTRY's units. percent: true = show value x 100 (the site's sliders read 0-100) and round to step for display. slider: a range control rather than a number field. hint: the site's muted text after the label (units live here).",
     "showIf: the control is shown only when EVERY item holds; an item is a bool key (on), {key, in: [values]}, or {any: [items]}. Evaluate with optionVisible() (fins_entry.js); hidden values may still be sent, the engine ignores them.",
     "hostSupplied: 'slicer' = a slicer plugin reads this from the slicer's own settings and leaves it out of its dialog; CAD hosts show it. Its range is the dialog's, not a limit: the host's own value is used as is. threshold is NOT a slicer's support angle: it is measured from the plate, where Cura's is from vertical.",
-    "site: the matching control id in web/index.html; plugins/shared/tests/options.test.js pins defaults, ranges and choices to it, and lists every site control this file leaves out on purpose (Draw placement: needs the site's canvas; Custom pad: four hand-typed numbers)."
+    "site: the matching control id in web/index.html; plugins/shared/tests/options.test.js pins defaults, ranges and choices to it, and lists every site control this file leaves out on purpose (Draw placement: needs the site's canvas; Contour placement: site-only until it is print-tested; Custom pad: four hand-typed numbers)."
   ],
   "version": 1,
   "sections": [

@@ -37,7 +37,8 @@
  */
 import { floatingPieces } from './pieces.js';
 import { findWallPatches } from './planes.js';
-import { BRACE, buildProps, crestOn, crestPart, EARS, noProps, PROP } from './prop.js';
+import { BRACE, buildProps, contourTracks, coverRowSpan, crestOn, crestPart, EARS, noProps, PROP } from './prop.js';
+import { classify, MUST } from './fins/coverage.js';
 import { MATERIAL } from './materials.js';
 import { buildSwayBraces } from './sway.js';
 import { CUT, CUTOUT_PATTERNS } from './cutout.js';
@@ -287,7 +288,18 @@ function buildFinsCore(topo, result, rot, opts = {}) {
   // rather than a plain breakaway prop); 'prop' proper leaves them off. The old
   // leaning-fin machinery (rankSites / chooseSpan / buildFin) was deleted once
   // nothing reached it; git history has it.
-  if (mode === 'auto' || mode === 'stabilize' || mode === 'full') {
+  if (mode === 'auto' || mode === 'stabilize' || mode === 'full' || mode === 'contour') {
+    // CONTOUR mode (prop/contour.js): Auto, with walls that follow the overhang's shape
+    // -- under its rims and vanes, along its edges, in arcs between -- traced once over
+    // the whole part and raced per region (prop.js contourRaceWith). No downhill race:
+    // a contour runs round a curve and down a vane on its own.
+    // The curves stand a span apart, the coverage slider's (prop.js coverRowSpan).
+    if (mode === 'contour' && !opts.contourTracks) {
+      const cls = classify(topo, result, rot);
+      const tracks = contourTracks(seatedPartTris(topo, rot, result.offset), result.regions, (f) => cls[f] === MUST,
+        PROP.stationStep, coverRowSpan(opts.coverage ?? FIN.coverDefault));
+      return buildFinsCore(topo, result, rot, { ...opts, downhill: false, curvedWalls: undefined, contourTracks: tracks });
+    }
     // Downhill walls (issue #25) stay only if the whole build is no worse for them:
     // see fins/downhill.js. Unset = judge both; true / false = build that one.
     // (`raster: false` is the tests' normal-pass-alone switch: no races at all.)

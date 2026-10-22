@@ -490,4 +490,7 @@ export default {
   "Brace tall walls is off: TPU walls taller than {mm} mm may sway as they print": "„Hohe Wände versteifen“ ist aus: TPU-Wände über {mm} mm können beim Drucken schwanken",
   "TPU tines stretch instead of snapping: cut them flush with side cutters.": "TPU-Zacken dehnen sich, statt abzubrechen: bündig mit einem Seitenschneider abschneiden.",
   "ABS and ASA shrink as they cool: the ears at the walls’ ends hold them to the plate, and the bed pad spreads wider. An enclosure helps most.": "ABS und ASA schrumpfen beim Abkühlen: Die Ohren an den Wandenden halten sie auf dem Druckbett, und der Stützfuß wird breiter. Am meisten hilft ein geschlossener Drucker.",
+  "Contour": "Kontur",
+  "Contour — walls that follow the shape": "Kontur — Wände, die der Form folgen",
+  "Walls that follow the shape: under rims and vanes, along edges, arcs between.": "Wände, die der Form folgen: unter Rändern und Schaufeln, entlang der Kanten, Bögen dazwischen.",
 };

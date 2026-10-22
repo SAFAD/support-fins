@@ -474,4 +474,7 @@ export default {
   "Brace tall walls is off: TPU walls taller than {mm} mm may sway as they print": "خيار تدعيم الجدران العالية متوقف: قد تتمايل جدران TPU الأعلى من {mm} mm أثناء الطباعة",
   "TPU tines stretch instead of snapping: cut them flush with side cutters.": "أسنان TPU تتمدد بدلاً من أن تنكسر: اقطعها بمحاذاة السطح بقاطعة جانبية.",
   "ABS and ASA shrink as they cool: the ears at the walls’ ends hold them to the plate, and the bed pad spreads wider. An enclosure helps most.": "ينكمش ABS وASA عند التبريد: تثبّت الأقراص عند أطراف الجدران على سطح الطباعة، وتتسع قاعدة التثبيت. الطابعة المغلقة هي أكثر ما يساعد.",
+  "Contour": "محيط",
+  "Contour — walls that follow the shape": "محيط — جدران تتبع الشكل",
+  "Walls that follow the shape: under rims and vanes, along edges, arcs between.": "جدران تتبع الشكل: تحت الحواف والريش، وعلى طول الأطراف، وأقواس بينها.",
 };

@@ -40,6 +40,12 @@ wall ends, a third of the wall's length across up to 5 mm, keeping `sideClear` o
 part, every other support and the pad, and a drawn wall gets them too; and a TPU or ABS
 build never leaks into the next PLA one.
 
+**`contour.test.js`** -- Contour mode (`web/prop/contour.js`, FIN-SPEC "Contour mode"):
+a round cap on a post gets an inset ring of curves `CONTOUR.inset` in from its rim, in
+pieces no longer than `CONTOUR.maxLen`, every station on the cap's underside; the built
+contour walls bend round the rim, never stand closer than both feet and `sideClear`, and
+the build is closed and outward; a square shelf with no curve anywhere still gets walls.
+
 **`stability.test.js`** -- the same part nudged by 1e-9 rad builds the same supports,
 on 24 scenes (local issue 023: 14 of them used to change -- an end station dropped one
 ulp off surfaceZAt's grid, a part edge in a wall's end-cap plane read as a pierce, a

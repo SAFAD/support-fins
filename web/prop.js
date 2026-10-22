@@ -47,6 +47,7 @@
  *   lattice.js    a net of struts cut back into struts (the raster slot's contender for a net)
  *   downhill.js   walls that run down an overhang and follow it to the plate (#25)
  *   curved.js     the Curved walls checkbox: when a bending downhill wall wins its race
+ *   contour.js    Contour mode's tracks: walls along the overhang's own outline, rims and vanes
  *   trace.js      the Curved walls' tracing surface: regions grown across the slivers, grouped
  *
  * Each module imports only modules above it in this list and never prop.js.
@@ -75,6 +76,7 @@ export { splitRegion, tubeLine, patchTracks } from './prop/tracks.js';
 export { straightness, contactLine, lowerSag, contourTop, settleTop } from './prop/contact.js';
 export { footFor, profileHalf, sweep, sweepBetween } from './prop/sweep.js';
 export { BRACE, braceWall, ribScale, tallH } from './prop/brace.js';
+export { CONTOUR, contourTracks } from './prop/contour.js';
 export { EARS, earWall } from './prop/ears.js';
 export { TIE, tieWalls } from './prop/ties.js';
 export { surfaceHitsAt, surfaceZAt, surfaceZsAt } from './prop/surface.js';
@@ -96,6 +98,15 @@ export function noProps() {
     skipped: { noLine: 0, wanders: 0, stub: 0, blocked: 0,
                degenerate: 0, buried: 0, weld: 0, sliver: 0, onPart: 0 },
   };
+}
+
+/** A curve's body length along it, first to last body station (tallSpan's curved twin). */
+function arcSpan(pts, mask) {
+  const r = tallBody(mask);
+  if (!r) return 0;
+  let len = 0;
+  for (let k = r[0] + 1; k <= r[1]; k++) len += Math.hypot(pts[k][0] - pts[k - 1][0], pts[k][1] - pts[k - 1][1]);
+  return len;
 }
 
 // mm row pitch at the sparsest coverage (0). This is DELIBERATELY wider than
@@ -141,11 +152,6 @@ export function buildProps(topo, result, rot, opts = {}) {
   const base = opts.raster === false ? normal
     : withRaster(topo, result, rot, opts, normal, capFrom,
                  (regions) => buildPass(topo, result, rot, opts, regions));
-  // Downhill walls (issue #25): walls that run down the overhang and follow it to
-  // the plate, raced per region against what the passes above built -- a region
-  // swaps only when they hold more. opts.downhill === true only: Auto turns it on
-  // and judges the whole build (fins/downhill.js); a direct call is unchanged.
-  if (opts.downhill !== true) return base;
   const off0 = result.offset;
   // A downhill wall starts at the region's top edge, where the overhang meets the
   // part: a flank lying exactly flush with a part face there reads as clear to
@@ -153,20 +159,33 @@ export function buildProps(topo, result, rot, opts = {}) {
   // flank vertices inside the part). Any wall vertex inside the part drops the
   // wall -- the wall's own triangles (`wallRange`), not its tines, which bite in
   // by design.
-  const unburied = (pass) => {
+  // `lift`: a vertex on the plate is probed this far above it -- the parity ray from a
+  // point exactly on the plate runs along the part's own bed faces and can miscount
+  // (a contour wall's foot beside a post read as inside it)
+  const unburied = (pass, lift = 0) => {
     pass.props = pass.props.filter((q) => {
       if (!q.wallRange) return true;
       for (let i = q.wallRange[0]; i < q.wallRange[1]; i++) {
         const v = pass.triangles[i];
-        if (insidePart(topo, rot, off0, v[0], v[1], v[2])) return false;
+        if (insidePart(topo, rot, off0, v[0], v[1], v[2] < lift ? lift : v[2])) return false;
       }
       return true;
     });
     return pass;
   };
+  // Contour mode's walls (prop/contour.js) are raced last, on whatever the races
+  // below leave
+  const contourRace = (from) => contourRaceWith(topo, result, rot, opts, from, capFrom,
+    (pass) => unburied(pass, 1e-3));
+  // Downhill walls (issue #25): walls that run down the overhang and follow it to
+  // the plate, raced per region against what the passes above built -- a region
+  // swaps only when they hold more. opts.downhill === true only: Auto turns it on
+  // and judges the whole build (fins/downhill.js); a direct call is unchanged.
+  if (opts.downhill !== true) return opts.contourTracks ? contourRace(base) : base;
   const strict = raceAgainst(topo, result, rot, opts, base, capFrom,
     (regions) => unburied(buildPass(topo, result, rot, { ...opts, curvedWalls: undefined, downhillRegions: regions }, null)),
     'downhill', DOWNHILL.maxGrow, DOWNHILL.race);
+  if (opts.contourTracks) return contourRace(strict);
   if (opts.curvedWalls !== true) return strict;
   // Curved walls (prop/curved.js, prop/trace.js): a second race over the regions
   // grown across the slivers, where a group whose walls bend always swaps to them
@@ -178,6 +197,22 @@ export function buildProps(topo, result, rot, opts = {}) {
     for (const q of pass.props) q.downhill = true;
     return pass;
   }, 'curved', null, DOWNHILL.race, bends);
+}
+
+/**
+ * CONTOUR mode (prop/contour.js): every region that got contour tracks
+ * (opts.contourTracks, Map region -> lines, traced by fins.js over the whole part)
+ * swaps to the walls they build, whatever they hold -- the user asked for walls that
+ * follow the shape -- and the normal walls that hold what they miss, or grip lower,
+ * stand beside them (raster.js keepers, kept a foot + 1 mm off). A region with no
+ * contour walls keeps its normal walls.
+ */
+function contourRaceWith(topo, result, rot, opts, base, capFrom, unburied) {
+  return raceAgainst(topo, result, rot, opts, base, capFrom, (regions) => {
+    const pass = unburied(buildPass(topo, result, rot, { ...opts, contourRegions: regions }, null));
+    for (const q of pass.props) q.contour = true;
+    return pass;
+  }, 'contour', null, undefined, (qb) => qb.length > 0);
 }
 
 /**
@@ -214,6 +249,8 @@ function buildPass(topo, result, rot, opts, raster) {
   const withTines = opts.tines === true;
   const only = opts.onlyRegions ?? null, short = opts.shortWalls === true;
   const downhill = opts.downhillRegions ?? null;
+  // Contour mode (prop/contour.js): the traced tracks for these regions, nothing else
+  const contour = opts.contourRegions ?? null;
   // Curved walls (prop/trace.js): the downhill lines trace regions grown across the
   // slivers, and regions whose growth meets trace (and race) as one
   const traced = downhill && opts.curvedWalls === true ? traceGroups(topo, result, rot, off, downhill) : null;
@@ -305,6 +342,18 @@ function buildPass(topo, result, rot, opts, raster) {
         gx += v[0]; gy += v[1]; gz += v[2];
       }
       regionPts.push([gx / 3, gy / 3, gz / 3]);
+    }
+
+    // Contour pass: the region's contour tracks, copied (the pipeline settles them in
+    // place), each a curve -- see `patch.curve` below
+    if (contour) {
+      if (!contour.has(ri)) continue;
+      const lines = opts.contourTracks?.get(ri);
+      if (lines?.length) {
+        patches.push({ faces: rFaces, area: regionArea, region: ri, tris: regionTris, curve: true,
+                       lines: lines.map((l) => l.map((p) => [p[0], p[1], p[2]])) });
+      }
+      continue;
     }
 
     // Downhill pass (prop/downhill.js): walls down the region's slope, for the
@@ -502,7 +551,8 @@ function buildPass(topo, result, rot, opts, raster) {
       // rather than the bowl-refusal it was for bucketed polylines -- bowls are
       // now refused by their holes (see patchTracks). Keep it: anything that
       // trips it means the frame fit itself went wrong.
-      if (straightness(line) > PROP.maxWander) { skipped.wanders++; runSquat(); continue; }
+      // (a contour track is a curve on purpose: CONTOUR.corner already cut its folds)
+      if (!patch.curve && straightness(line) > PROP.maxWander) { skipped.wanders++; runSquat(); continue; }
 
       // Trim to the longest run that can actually carry a wall, rather than
       // discarding the track over a local problem. See `longestRun`.
@@ -512,7 +562,9 @@ function buildPass(topo, result, rot, opts, raster) {
         line.map((p, k) => clear[k] && p[2] - PROP.gap >= PROP.minHeight), clear);
       const run = longestRun(usable);
       if (!run || run[1] - run[0] < PROP.minStations) { skipped.blocked++; runSquat(); continue; }
-      if (raster && !patch.strut) {       // a strut takes one wall, as it would standing alone
+      // (a contour keeps its other buildable stretches too: a curve blocked once along a
+      // rim would otherwise lose all but its longest piece)
+      if ((raster || patch.curve) && !patch.strut) {       // a strut takes one wall, as it would standing alone
         for (const rest of rasterRest(line, run)) {
           lines.push(rest);
           // the piece runs its own squat pass; this line's must not double it
@@ -522,7 +574,12 @@ function buildPass(topo, result, rot, opts, raster) {
       const sub = line.slice(run[0], run[1]);
 
       const body = bodyMask(sub);               // before settleTop -- see bodyMask
-      if (tallSpan(sub, body) < minSpanFor(sub, body, !!patch.smallTube, short)) { skipped.stub++; runSquat(); continue; }
+      // a curve's span is along it: an arc round a boss is as long as it is, not its chord
+      // ...and a low one may be as short as the last resort's (minSpanFor `short`): a
+      // contour is cut where it meets a rim or a spoke, and its piece still holds the red
+      const spanOf = (pts, mask) => (patch.curve ? arcSpan(pts, mask) : tallSpan(pts, mask));
+      const shortOk = short || !!patch.curve;
+      if (spanOf(sub, body) < minSpanFor(sub, body, !!patch.smallTube, shortOk)) { skipped.stub++; runSquat(); continue; }
 
       // Last, on the trimmed run only: put the closest approach exactly on spec.
       // It runs here rather than earlier because trimming changes which part of
@@ -556,7 +613,7 @@ function buildPass(topo, result, rot, opts, raster) {
         const span2 = Math.hypot(settled[settled.length - 1][0] - settled[0][0],
                                  settled[settled.length - 1][1] - settled[0][1]);
         const settledBody = body.slice(run2[0], run2[1]);
-        if (tallSpan(settled, settledBody) < minSpanFor(settled, settledBody, !!patch.smallTube, short)) { reason = 'stub'; break; }
+        if (spanOf(settled, settledBody) < minSpanFor(settled, settledBody, !!patch.smallTube, shortOk)) { reason = 'stub'; break; }
 
         const before = out.length;
         if (!sweep(settled, zBed, out, PROP.minHeightSquat)) {
@@ -624,7 +681,7 @@ function buildPass(topo, result, rot, opts, raster) {
           // it, so on the successful try it points at this wall. emitTines just
           // pushed its tines right after, so wall + tines are one contiguous segment.
           triRanges: [[before, out.length]],
-          ...(downhill ? { wallRange: [before, wallEnd] } : {}),   // the wall without its tines
+          ...(downhill || patch.curve ? { wallRange: [before, wallEnd] } : {}),   // the wall without its tines
           ...(patch.members ? { members: patch.members } : {}),     // a traced group's regions
         });
         for (let k = run[0] + run2[0]; k < run[0] + run2[1]; k++) claimed[k] = true;

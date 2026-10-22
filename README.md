@@ -74,6 +74,15 @@ broad flat ceilings, **Full coverage** is what fills them: its wall budget grows
 the overhang there is to hold. These profiles are reasoned from the materials, **not
 print-tested yet** — see `docs/FIN-SPEC.md` ("Filament profiles").
 
+### Contour mode
+
+**Contour** (next to Full coverage) places walls that follow the part's own shape instead
+of straight rows: an inset curve along each overhang's outer edge, a wall down the middle
+of every rim, rib and vane, rings round a boss, and arcs a span apart across the ceiling
+between them. Each curve is cut into separate breakaway pieces, and where a curve can't
+stand the usual Auto walls stay. The coverage slider sets the spacing. **Not print-tested
+yet** — see `docs/FIN-SPEC.md` ("Contour mode").
+
 ### Sway braces for tall parts
 
 **Full brace depth** is an optional checkbox under Sway. It starts off, keeping

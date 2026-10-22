@@ -365,6 +365,30 @@ Not printed yet. Off by default; Auto and Full only, site only (plugins later).
 | limits | a red band shallower than `minSpan` (**7 mm**) downhill gets stubs, not curves; one bending line swaps its whole group, so on a part whose red joins into one surface the forced swap reaches most of it (`keepers` and Auto's fill stand behind it; in Full the 1% judge) | bean X-30: 39 lines traced, 26 stubs, 1 curve. Ticked Auto can hold less than unticked: lamp shade X30 25382 → 24842 mm² (−2.1%, the fill at its cap; Full keeps the straight build there). Kept forced (Matthew, 2026-10-17); every other measured case holds at least as much |
 | switch | `opts.curvedWalls === true`; anything else is the race above, byte for byte | |
 
+## Contour mode — `web/prop/contour.js`
+
+Not printed yet. A placement mode beside Auto and Full: walls that follow the overhang's
+own outline, the way a hand draws supports under a curved part (a fan housing on its
+ribs: an inset curve round the shell's rim, spokes under the vanes, arcs between, a ring
+round the hub). Straight rows cross such a part at whatever angle its axis gives and
+leave curved rims bare. The wall is the ordinary plate wall; only the tracks are new.
+
+| feature | value | rationale |
+|---|---|---|
+| raster | the whole part's MUST overhang (`coverage.js`) in plan, **0.5 mm** cells (`CONTOUR.cell`): each cell's lowest overhang surface and region, and the lowest part surface of any kind; a cell with part below its overhang is left to Auto's part-attached walls | one picture of the outline across regions: a rim's curve runs on through every region it crosses |
+| levels | cells join where neighbours' surfaces differ by ≤ **1 mm** (`CONTOUR.step`); an edge is a cell beside another level, none, or a step inside its own | a stepped or spiral ceiling is several levels, so no wall top jumps a riser; a vane hung from a spiral ceiling parts from it where the ceiling steps up |
+| held / free | an edge is HELD where part goes on down below it (a wall, a vane, a lower level), FREE where it ends in air or steps up | a held edge already anchors the ceiling's bridge |
+| narrow | where a level is ≤ **3.5 mm** from its edge (`CONTOUR.narrow`: the underside of a rib, vane or rim), one wall down its middle: the skeleton (Zhang–Suen thinning) of its cells less their edge cells, traced branch by branch; spurs under **3 mm** off a junction dropped | a vane is too narrow for an inset curve on each side |
+| outline | on a wide level, a curve **2.25 mm** in from every free edge (`CONTOUR.inset`: footMin 1.6 + sideClear 0.35 and a hair), kept a foot + sideClear off held edges | the inset outline of the sketch, unbroken where a vane meets the rim |
+| bridges | iso-curves at half the coverage slider's row pitch (`coverRowSpan`, 12 mm at the default) from held edges and the walls kept already, then a pitch apart | arcs between the spokes, rings inside a rim; a pocket narrower than a pitch between ribs gets none |
+| pieces | resampled at `stationStep`, smoothed (3 passes), cut where it turns > **50°** over **2 mm** (`CONTOUR.corner`), closed loops opened, cut evenly under **60 mm** (`CONTOUR.maxLen`), **3 mm** between pieces | a sweep round a sharp corner folds its foot into itself; separate pieces break away |
+| no fusing | placed by family (narrow, outline, bridges), each longest piece first; a station closer to a kept one than both feet + sideClear is dropped | a spoke meeting the rim stops short of it |
+| pipeline | each piece through buildProps's per-line pipeline (clear, settle, sweep, tines, weld); a curve skips the straightness check, keeps every buildable stretch (not only its longest), its span is measured along it and it may be as short as the last resort's (`minSpanFor` short) | a contour is cut where it meets a rim or a spoke, and its piece still holds the red |
+| race | per region (`contourRaceWith`): a region with any contour wall swaps to them; the normal walls that hold what they miss (≥ `RACE_ABS`) or grip lower stand beside them (`keepers`); a region with none keeps its Auto walls. No downhill race (a contour runs round a curve and down a vane on its own), then Auto's wedges, short walls and fill | the user asked for the curve |
+| no flush flank | a contour wall with any vertex (tines aside) inside the part is dropped, its plate vertices probed **1e-3 mm** up | the parity ray from a point exactly on the plate runs along the part's bed faces and miscounted (a foot beside a post read as inside it) |
+| measured | 6R0 711202 fan housing on its ribs (X90, PLA): 44 walls, 37 of them contour; 80.1% of the MUST overhang within 6 mm of a wall (Auto 82.4%; the metric doesn't count a vane holding the ceiling beside it); ~0.8 s | |
+| switch | `mode: 'contour'`; every other mode builds byte for byte as before | |
+
 ## Naming
 
 Slant3D says "grip fins" once. Unrelated to the *grip fin* used elsewhere in Matthew's

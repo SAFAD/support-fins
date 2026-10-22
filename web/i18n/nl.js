@@ -470,4 +470,7 @@ export default {
 	"Brace tall walls is off: TPU walls taller than {mm} mm may sway as they print": "Hoge wanden verstevigen staat uit: TPU-wanden hoger dan {mm} mm kunnen zwaaien tijdens het printen",
 	"TPU tines stretch instead of snapping: cut them flush with side cutters.": "TPU-tanden rekken uit in plaats van af te breken: knip ze vlak af met een zijkniptang.",
 	"ABS and ASA shrink as they cool: the ears at the walls’ ends hold them to the plate, and the bed pad spreads wider. An enclosure helps most.": "ABS en ASA krimpen bij het afkoelen: de oortjes aan de uiteinden van de wanden houden ze op het printbed, en het bedplaatje wordt breder. Een gesloten printer helpt het meest.",
+  "Contour": "Contour",
+  "Contour — walls that follow the shape": "Contour — wanden die de vorm volgen",
+  "Walls that follow the shape: under rims and vanes, along edges, arcs between.": "Wanden die de vorm volgen: onder randen en schoepen, langs de randen, bogen ertussen.",
 };

@@ -583,4 +583,7 @@ export default {
   "Brace tall walls is off: TPU walls taller than {mm} mm may sway as they print": "「加固高墙」已关闭：高于 {mm} mm 的 TPU 墙打印时可能会晃动",
   "TPU tines stretch instead of snapping: cut them flush with side cutters.": "TPU 齿不会折断，只会被拉长：请用斜口钳齐平剪掉。",
   "ABS and ASA shrink as they cool: the ears at the walls’ ends hold them to the plate, and the bed pad spreads wider. An enclosure helps most.": "ABS 和 ASA 冷却时会收缩：墙两端的防翘边耳把墙按在热床上，底板垫也会铺得更宽。封闭式打印机效果最好。",
+  "Contour": "轮廓",
+  "Contour — walls that follow the shape": "轮廓 — 沿形状走向的墙",
+  "Walls that follow the shape: under rims and vanes, along edges, arcs between.": "沿形状走向的墙：位于边沿和叶片下方、沿着边缘，其间以弧线相连。",
 };

@@ -36,7 +36,9 @@ export function setFinMode(v) { finMode = v; }
 // FULL COVERAGE ('full', fins/fill.js) is Auto plus walls under the red Auto left
 // bare, so everything Auto offers -- the coverage slider, sway braces, per-fin
 // removal, walls added by hand -- applies to it too. Every Auto-only gate asks this.
-export const autoLike = (m = finMode) => m === 'auto' || m === 'full';
+// CONTOUR ('contour', prop/contour.js) is Auto with walls that follow the shape, so the
+// same gates apply to it.
+export const autoLike = (m = finMode) => m === 'auto' || m === 'full' || m === 'contour';
 // Wide-face coverage is Auto's row density. Draw has no rows, so it is hidden there;
 // Full coverage holds every overhang it can reach whatever the slider says, so there
 // it shows but is disabled (finbuild.js sends the neutral default instead).
@@ -52,8 +54,9 @@ export function syncCoverageUI() {
   fld.title = t(full ? COVER_TIP_FULL : coverTip);
   el('long-walls-fld').hidden = !full;   // Full coverage's own (fins/rows.js)
   // only the fill pass joins walls (#309): Full's, and Auto's under Curved walls
-  el('separate-walls-fld').hidden = !(full || (autoLike() && el('curved-walls').checked));
-  el('curved-walls-fld').hidden = !autoLike();   // Draw lays its own lines
+  el('separate-walls-fld').hidden = !(full || (finMode === 'auto' && el('curved-walls').checked));
+  // Draw lays its own lines, and Contour's already follow the curve
+  el('curved-walls-fld').hidden = !(finMode === 'auto' || full);
   syncMore();   // coverage counts as changed only while the build reads it
 }
 // Suggest + Draw mix: when true, the pointer places hand-drawn walls ON TOP of the
@@ -74,6 +77,7 @@ export function syncAugmentUI() {
 const MODE_NOTES = {
   auto: 'Places supports for you.',
   full: 'Auto, plus walls under every overhang it leaves bare. More plastic.',
+  contour: 'Walls that follow the shape: under rims and vanes, along edges, arcs between.',
   draw: 'You place each wall: click two points across an overhang.',
 };
 export function syncModeButtons() {
