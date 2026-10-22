@@ -3,7 +3,8 @@ import { t, tn } from './i18n.js';
  * The status readout: the Fins/Pad rows, the note under them and its (i), the
  * grams receipt, and why a part got no fins.
  */
-import { PAD } from '../fins.js';
+import { FIN, PAD } from '../fins.js';
+import { bareArea, fillReach } from '../fins/fill.js';
 import { PROP, tallH } from '../prop.js';
 import { el } from './dom.js';
 
@@ -15,9 +16,15 @@ import { drawnWalls, drawMsg, selectedWall, selectedNote, drawShown, drawMateria
 import {
   finMode, finsVisible, materialDensity, syncSectionSums, autoLike, material,
 } from './settings.js';
-import { analysisTiming } from './part.js';
+import { analysisTiming, topology, lastResult, rotM3 } from './part.js';
+import { islandsBuilt } from './islands.js';
 import { ifaceMaterial } from './scene.js';
 import { activeAdded, activeWalls, finMaterial, padMaterial } from './finbuild.js';
+
+// The "fins won't hold most of this" warning (updateReadout): over half the red bare,
+// and at least this much of it, so a part with a few bare slivers isn't told to
+// reach for tree supports.
+const MOSTLY_BARE = { share: 0.5, area: 25 };
 
 /**
  * Why did this part get no fins, in terms the user can act on?
@@ -141,6 +148,10 @@ export function updateReadout(built, ms) {
   if (ms != null) lastMs = ms;
   if (finMode === 'draw') updateDrawReadout(built, ms);
   else updateFinReadout(built, ms);
+  // the midair-starts card: what Full coverage's walls left bare (a Full build with no
+  // fill pass -- a point-seated part, pad off -- walls none), else the plain count
+  islandsBuilt(finsVisible && finMode === 'full' && built
+    ? (built.fill ? { bare: built.fill.islandsBare, capped: built.fill.islandsCapped } : { all: true }) : null);
   updateReceipt();
 }
 
@@ -218,12 +229,14 @@ function updateDrawReadout(built, ms) {
   const walls = ok.length - braces;
   const ribs = ok.reduce((a, w) => a + (w.kind === 'sway' ? 0 : w.info?.braces ?? 0), 0);
   const ears = ok.reduce((a, w) => a + (w.kind === 'sway' ? 0 : w.info?.ears ?? 0), 0);
+  const crosses = ok.reduce((a, w) => a + (w.kind === 'sway' ? w.info?.cross ?? 0 : 0), 0);
   const parts = [];
   if (walls) {
     parts.push(tn('{n} drawn wall', '{n} drawn walls', walls) + (ribs ? ` · ${tn('{n} wall rib', '{n} wall ribs', ribs)}` : '')
       + (ears ? ` · ${earCount(ears)}` : ''));
   }
-  if (braces) parts.push(tn('{n} sway brace', '{n} sway braces', braces));
+  if (braces) parts.push(tn('{n} sway brace', '{n} sway braces', braces)
+    + (crosses ? ` · ${tn('{n} brace rib', '{n} brace ribs', crosses)}` : ''));
   box.textContent = ok.length
     ? parts.join(' + ') + (tines ? ` · ${tineCount(tines)}` : '')
     : t('none yet');
@@ -357,6 +370,7 @@ function updateFinReadout(built, ms) {
   const swayTxt = sw?.count
     ? `${autoTxt || drawnTxt ? ' + ' : ''}${tn('{n} sway brace', '{n} sway braces', sw.count)}`
       + (sw.tines ? ` · ${t('{n} brace tines', { n: sw.tines })}` : '')
+      + (sw.cross ? ` · ${tn('{n} brace rib', '{n} brace ribs', sw.cross)}` : '')
     : '';
   box.textContent = (autoTxt + ribTxt + drawnTxt + swayTxt + removedTxt) || t('none possible');
   box.classList.toggle('warn', n === 0 && !drawnOk && !sw?.count);
@@ -433,6 +447,23 @@ function updateFinReadout(built, ms) {
   // Full coverage (fins/fill.js): what it added, and -- must-see, in the panel --
   // the red it couldn't reach, never hidden.
   const fl = built.fill;
+  // What the walls leave bare (built.bare, fins/fill.js bareArea). Fins removed by
+  // hand held red too: measure again against the walls left (the build's own number
+  // would hide what the removal dropped). Hand-drawn walls aren't counted, so after
+  // one the line can only overstate what is bare.
+  let ba = built.bare;
+  if (ba && removedIds.size && topology && lastResult) {
+    ba = bareArea(topology, lastResult, rotM3.elements, ba,
+                  { fins: built.fins.filter((f) => !removedIds.has(f.id)) });
+  }
+  const pct = ba?.total ? Math.max(1, Math.round(100 * ba.area / ba.total)) : 0;
+  // More than half the red still bare, and not a few slivers: a figure, a mini, an
+  // organic shape. Fins hold the spine and the big overhangs there, not the rest
+  // (local issue 008's de-scope), and the user should hear that before printing.
+  // Not when nothing was placed ("none possible" says why), and in Auto not under a
+  // sparse slider: there the bare share is the slider's, not the shape's.
+  const mostlyBare = !!ba && n > 0 && ba.area >= MOSTLY_BARE.area && ba.area > MOSTLY_BARE.share * ba.total
+    && (fl || (built.bare.coverage ?? FIN.coverDefault) >= FIN.coverDefault);
   if (fl) {
     if (fl.walls) {
       help.push(tn('Full coverage added {n} wall under overhangs Auto left bare.',
@@ -442,8 +473,8 @@ function updateFinReadout(built, ms) {
     }
     const bare = Math.round(fl.unservedArea);
     if (fl.capped) {
-      lead.push(t('Full coverage stopped at its wall limit with {area} mm² of overhang still bare — rotate the part, or switch to Auto', { area: bare }));
-    } else if (bare >= 1) {
+      lead.push(t('Full coverage stopped at its wall limit with {area} mm² of overhang still bare — rotate the part, or add a wall by hand', { area: bare }));
+    } else if (bare >= 1 && !mostlyBare) {   // (else the figure warning below says it)
       lead.push(t('{area} mm² of overhang no wall can reach this way up — tilt the part, or add a wall by hand', { area: bare }));
     }
   }
@@ -461,6 +492,22 @@ function updateFinReadout(built, ms) {
     } else if (bare >= 1) {
       lead.push(t('{area} mm² of overhang no wall can reach this way up — tilt the part, or add a wall by hand', { area: bare }));
     }
+  }
+  // The figure warning in the panel: a build that holds under half of a figure
+  // mustn't read as done. Otherwise Auto's bare share is a fact behind the (i), not a
+  // warning: a tilted cube's strip past its end walls counts there and prints fine.
+  // Full says its own above; a curved fill's line covers only its regions.
+  if (mostlyBare) {
+    lead.push(fl
+      ? t('Lots of small or tucked-in overhang here ({pct} % still bare in Full coverage). For figures and minis, slicer tree supports often do better.', { pct })
+      : t('Lots of small or tucked-in overhang here ({pct} % bare). Try Full coverage; for figures and minis, slicer tree supports often do better.', { pct }));
+  } else if (ba && !fl && n && Math.round(ba.area) >= 1) {
+    help.push(t('Auto leaves {area} mm² ({pct} %) of overhang more than {reach} mm from a wall — Full coverage adds walls there',
+                { area: Math.round(ba.area), pct, reach: Math.round(fillReach(built.bare.coverage)) }));
+  }
+  // Curved walls in Full: the straight build held more, so it was kept
+  if (built.curvedDropped) {
+    help.push(t('Curved walls: Full coverage does better here with straight walls, so it kept them. Switch to Auto for the curves.'));
   }
   // (in Full coverage the fill's own line above says what is still bare)
   if (built.unserved && !fl) {

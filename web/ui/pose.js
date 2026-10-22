@@ -13,10 +13,12 @@ import { keptHit, planeHandleShown } from './section.js';
 import { removeActive } from './remove.js';
 import { histPush, beginGesture, commitGesture } from './history.js';
 import { hideSuggestions, clearSuggestionMark } from './suggest.js';
+import { initRingFade } from './ringfade.js';
 import { drawActive, clearPreview } from './walls.js';
 import { refreshFins } from './finbuild.js';
 import { finsVisible } from './settings.js';
 import { part, topology, shade } from './part.js';
+import { moveActive, setMove } from './move.js';
 
 // The user rotates. Always. Auto-orientation may suggest, never apply -- the
 // spike's strength-optimal pose for one hub was 155mm tall balanced on a needle:
@@ -24,9 +26,15 @@ import { part, topology, shade } from './part.js';
 export const gizmo = new TransformControls(camera, renderer.domElement);
 gizmo.setMode('rotate');
 gizmo.setSize(0.85);
+initRingFade(gizmo);   // faint while a sway brace is aimed (ringfade.js)
 scene.add(gizmo.getHelper ? gizmo.getHelper() : gizmo);
 const dragFrom = new THREE.Quaternion();   // pose at drag start: did the drag turn it?
 let dragSnap = null;                       // undo state at drag start (history.js)
+// Did the last ring press turn the part? A press under the 4 px click threshold
+// can still snap a ring 5 deg; app.js then won't take it as a click (Sway braces).
+let pressTurned = false;
+export const ringPressTurned = () => pressTurned;
+export function clearRingPress() { pressTurned = false; }
 gizmo.addEventListener('dragging-changed', (e) => {
   controls.enabled = !e.value;
   if (e.value && part) { dragFrom.copy(part.quaternion); dragSnap = beginGesture(); }
@@ -36,6 +44,7 @@ gizmo.addEventListener('dragging-changed', (e) => {
     el('rot-delta').textContent = '';
     // a turn by the rings is one undo step, like the 90deg buttons (it never was one)
     const turned = !!part && !part.quaternion.equals(dragFrom);
+    pressTurned = turned;
     if (turned) clearSuggestionMark();
     commitGesture(dragSnap, turned);
     dragSnap = null;
@@ -171,7 +180,7 @@ el('show-rings').addEventListener('change', (e) => {
  *  its place while that is up: two sets of handles on one part is a misclick. */
 export function setGizmo() {
   const on = showRings && !!part && !drawActive() && !layActive() && !removeActive()
-    && !planeHandleShown();
+    && !planeHandleShown() && !moveActive();
   gizmo.enabled = on;
   // A disabled gizmo stops tracking hover, so a ring hovered last would stay
   // "under the pointer" and app.js would swallow the next pick for it.
@@ -186,6 +195,7 @@ export function setGizmo() {
  *  isn't swallowed by the rotate gizmo; hovering highlights the face. */
 function beginLay() {
   if (!part || !topology) return;
+  setMove(false);      // its press would take the face click
   layPlacing = true;
   clearPreview();
   setGizmo();          // hides the rotate rings so they don't eat the pick

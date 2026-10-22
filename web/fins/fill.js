@@ -39,12 +39,23 @@
  * maxUnsupportedSpan/2 (6 mm, the scoreboard's held rule) at the middle to
  * FILL.denseReach at the right.
  *
+ * ISLAND STARTS (opts.islands, web/islands.js; local issue 041): a boss end or a
+ * peg tip whose first layer starts in midair, no face there red. LAST, once the red
+ * has every wall it gets (taken in the same pass, they cost the red room: a snowman
+ * mini lost 4.6 points), with its own FILL.islandWalls budget past the caps. Each
+ * start's points are targets [x, y, z, w, island], FILL.islandW a point, so a wall
+ * under one alone passes minGain. A start is held only by a wall top within
+ * FILL.islandReach under it, not the 6 mm bridging reach: a layer that begins in
+ * midair can't bridge to a wall beside it. Not counted in the bare mm2; a start
+ * left bare is returned (`unserved.islands`), like the red.
+ *
  * GUARDRAILS. A wall is kept only if it holds new red and keeps PROP.sideClear off
  * every support already built (fused walls don't break away) -- from its floor up:
  * a wall on the part (a chin over the chest) has no plate foot to keep clear. FILL.maxWalls,
  * maxTries and maxChecks bound the work -- counts, not a clock, so the output is the same
- * on every machine -- and grow with the red there is to hold (budgetScale). Red no wall can reach is returned (`unserved`), never hidden:
- * quality first, surface the dropped overhang.
+ * on every machine -- and grow with the red there is to hold (budgetScale). Red no wall
+ * can reach is returned (`unserved`), never hidden: quality first, surface the dropped
+ * overhang.
  */
 import { drawnLine, drawnWall, DRAW_MIN_LEN } from '../draw.js';
 import { BRACE, braceWall, footFor, PART_BAND, PROP, surfaceHitsAt, TIE, tieWalls } from '../prop.js';
@@ -67,6 +78,9 @@ export const FILL = {
   sparseBelow: 0.25, // coverage under this: one wall per group, then stop
   denseReach: 4.0,   // mm: the reach at coverage 1 (the middle is maxUnsupportedSpan/2)
   minGain: 0.5,      // mm2 of new red a wall must hold to be kept
+  islandReach: 2.0,  // mm in plan: a wall top this close under an island start holds it
+  islandW: 1.0,      // weight of one island point (a 1 mm cell of red), so one alone passes minGain
+  islandWalls: 20,   // the island pass's walls past maxWalls (and 3x that in tries, 50x in checks)
   maxStep: 2.5,      // mm: a line's top may climb or drop this much between stations
   redNear: 1.5,      // mm: a station this close to leftover red counts toward its stretch
   maxWalls: 40,
@@ -133,6 +147,27 @@ function leftoverPoints(topo, result, rot, near, cls, regions = null) {
   }
   return [...cells.values()].map((c) => [c[0] / c[3], c[1] / c[3], c[2] / c[3], c[3]]);
 }
+
+/**
+ * The island starts (findIslands) not yet held, as targets [x, y, z, FILL.islandW, k]
+ * -- each start's points merged into FILL.sample cells, k the start's index.
+ */
+function islandPoints(islands, held) {
+  const s = FILL.sample, out = [];
+  islands.forEach((isl, k) => {
+    const cells = new Set();
+    for (const p of isl.points) {
+      const c = `${Math.floor(p[0] / s)},${Math.floor(p[1] / s)},${Math.floor(p[2] / s)}`;
+      if (cells.has(c) || held(p[0], p[1], p[2])) continue;
+      cells.add(c);
+      out.push([p[0], p[1], p[2], FILL.islandW, k]);
+    }
+  });
+  return out;
+}
+
+/** How many island starts the targets `pts` come from. */
+const startsIn = (pts) => new Set(pts.filter((p) => p.length > 4).map((p) => p[4])).size;
 
 /**
  * Groups of points (index arrays): linked when within FILL.link in plan and no
@@ -494,7 +529,7 @@ function boxGrid() {
  * and its ribs (its own wall excepted; joined flanges allowed, as for the walls).
  * Appends to `triangles`, adds each wall's ribs as a second triRange; returns the count.
  */
-function braceFill(props, floors, triangles, tris, autoTris) {
+function braceFill(props, floors, triangles, tris, autoTris, shared = true) {
   let autoGrid = null;
   const grids = props.map(() => null);
   const gridOf = (k) => {
@@ -510,8 +545,8 @@ function braceFill(props, floors, triangles, tris, autoTris) {
     const out = [];
     const clear = (t) => {
       if (!autoGrid) { autoGrid = boxGrid(); autoGrid.add(autoTris); }
-      if (autoGrid.hits(t, PROP.sideClear, true)) return false;
-      for (let j = 0; j < props.length; j++) if (j !== k && gridOf(j).hits(t, PROP.sideClear, true)) return false;
+      if (autoGrid.hits(t, PROP.sideClear, shared)) return false;
+      for (let j = 0; j < props.length; j++) if (j !== k && gridOf(j).hits(t, PROP.sideClear, shared)) return false;
       return true;
     };
     const built = braceWall(q.line, (i) => floors[k][i], tris, 0, out, (t) => {
@@ -536,7 +571,7 @@ function braceFill(props, floors, triangles, tris, autoTris) {
  * its own two walls (Auto's, the other fill walls, their ribs and ties). Appends to
  * `triangles`; the struts join wall A's triRanges. Returns how many ties.
  */
-function tieFill(props, floors, triangles, tris, others) {
+function tieFill(props, floors, triangles, tris, others, shared = true) {
   // per wall: its plate stations as [x, y, zMax], zMax where its ties must stop
   const plate = props.map((q, k) => {
     if (!floors[k] || q.height < TIE.minHeight) return [];
@@ -559,7 +594,7 @@ function tieFill(props, floors, triangles, tris, others) {
     if (count[k] >= TIE.perWall || count[j] >= TIE.perWall) continue;
     const out = [];
     if (!tieWalls(a, b, Math.min(a[2], b[2]), tris, 0, out)) continue;
-    if (others.hits(out, PROP.sideClear, true, (t) => t?.fill && (t.k === k || t.k === j))) continue;
+    if (others.hits(out, PROP.sideClear, shared, (t) => t?.fill && (t.k === k || t.k === j))) continue;
     const at = triangles.length;
     for (const t of out) triangles.push(t);
     props[k].triRanges.push([at, triangles.length]);
@@ -598,6 +633,23 @@ export function fillCoverage(topo, result, rot, opts, built) {
   return rows;
 }
 
+/**
+ * How much MUST red `built`'s walls leave bare, measured the way fillOnce measures
+ * it (a point is held within fillReach of a wall top): { area, total } in mm2,
+ * `total` being all the MUST red. No walls are placed. Auto's readout says it, so a
+ * build that holds little doesn't read as done (fins.js sets built.bare).
+ */
+export function bareArea(topo, result, rot, opts, built) {
+  const tops = [];
+  // (a sway brace's line is its foot on the plate, and it holds no red)
+  for (const w of built.fins ?? []) if (w.kind !== 'sway') for (const p of w.line ?? []) tops.push(p);
+  const near = reachOf(tops, fillReach(Math.max(0, Math.min(1, opts.coverage ?? 0.5))));
+  const cls = classify(topo, result, rot);
+  const sum = (pts) => pts.reduce((s, p) => s + p[3], 0);
+  const total = sum(leftoverPoints(topo, result, rot, () => false, cls));
+  return { area: tops.length ? sum(leftoverPoints(topo, result, rot, near, cls)) : total, total };
+}
+
 function fillOnce(topo, result, rot, opts, built) {
   const coverage = Math.max(0, Math.min(1, opts.coverage ?? 0.5));
   const R = fillReach(coverage);
@@ -605,11 +657,18 @@ function fillOnce(topo, result, rot, opts, built) {
   const tops = [];
   for (const w of built.fins ?? []) for (const p of w.line ?? []) tops.push(p);
   const near = reachOf(tops, R);
+  const nearIsland = reachOf(tops, FILL.islandReach);
+  // an island start's point is held only from right under it (FILL.islandReach)
+  const held = (p) => (p.length > 4 ? nearIsland : near)(p[0], p[1], p[2]);
   const cls = classify(topo, result, rot);
-  const pts = leftoverPoints(topo, result, rot, near, cls, opts.fillRegions ?? null);
+  const red = leftoverPoints(topo, result, rot, near, cls, opts.fillRegions ?? null);
+  // (not under fillRegions: Auto's curved-walls fill is about the red a curve won)
+  const isl = opts.fillRegions ? [] : islandPoints(opts.islands ?? [], nearIsland);
+  const pts = red;
   const triangles = [], props = [];
-  const stats = { walls: 0, tries: 0, checks: 0, capped: false, refused: {}, startArea: pts.reduce((s, p) => s + p[3], 0) };
-  if (!pts.length) return { triangles, props, tines: 0, unserved: { area: 0, pts: [] }, stats };
+  const stats = { walls: 0, tries: 0, checks: 0, capped: false, refused: {}, startArea: red.reduce((s, p) => s + p[3], 0),
+                  islands: startsIn(isl) };
+  if (!red.length && !isl.length) return { triangles, props, tines: 0, unserved: { area: 0, pts: [], islands: 0, islandPts: [] }, stats };
 
   const tris = seatedPartTris(topo, rot, result.offset);
   // the model's length (opts.longWalls, on unless false: the Long walls box), for the rows
@@ -619,24 +678,31 @@ function fillOnce(topo, result, rot, opts, built) {
   // Plate only (#218): no wall on the part -- never the retry that stands one there,
   // and every try refuses a station with part under it (stationClear's `plate`)
   const plateOnly = opts.plateOnly === true, strict = plateOnly ? { plate: true } : null;
+  // Separate walls (#309, the resin default): no wall crosses another or joins its
+  // flange -- resin cures crossing walls and shared bases into one block that won't
+  // break apart. Never the flange or joined retries, and no flange band is shared.
+  const apart = opts.separateWalls === true, shared = !apart;
   const drawOpts = { under: true, tines: opts.tines ?? true, tineDensity: opts.tineDensity, layerHeight: opts.layerHeight,
                      plateOnly, topo, rot, offset: result.offset };
   let tines = 0;
   const floors = [];               // each kept wall's bottom z per station (drawnWall), for the braces
   const dead = new Set();          // points no line could serve
-  const bare = (p) => !dead.has(p) && !near(p[0], p[1], p[2]);
-  // the caps, grown with the red there is to hold (budgetScale)
+  const bare = (p) => !dead.has(p) && !held(p);
+  // the caps, grown with the red there is to hold (budgetScale), and the island pass's
+  // budget past them (FILL.islandWalls)
   const k = budgetScale(stats.startArea);
   const maxWalls = Math.round(FILL.maxWalls * k), maxTries = Math.round(FILL.maxTries * k);
   const maxChecks = Math.round(FILL.maxChecks * k);
-  const full = () => stats.walls >= maxWalls || stats.tries >= maxTries || stats.checks >= maxChecks;
+  let past = 0;
+  const full = () => stats.walls >= maxWalls + past || stats.tries >= maxTries + 3 * past
+    || stats.checks >= maxChecks + 50 * past;
   const CAP = 'cap';               // wallFor stopped on a cap: give up on nothing
   // a built wall goes in: its triangles, its tops into the reach set, its record
   const keep = (r, joined = false) => {
     const at = triangles.length;
     for (const t of r.tris) triangles.push(t);
     others.add(r.tris, { fill: true, k: props.length });
-    for (const p of r.top) near.add(p);
+    for (const p of r.top) { near.add(p); nearIsland.add(p); }
     props.push({ line: r.top, triRanges: [[at, triangles.length]], height: r.height, span: r.length,
                  tines: r.tines ?? 0, partAttached: !!r.partAttached, squat: !!r.squat, fill: true,
                  joined: joined || undefined });
@@ -653,7 +719,7 @@ function fillOnce(topo, result, rot, opts, built) {
   // gets a try.
   const wallFor = (live, g, local = false) => {
     const redAt = redGrid(g.map((i) => live[i]));
-    let aims = null, builds = 0, partOk = local && !plateOnly, flangeOk = local, joinOk = local;
+    let aims = null, builds = 0, partOk = local && !plateOnly, flangeOk = local && !apart, joinOk = local && !apart;
     // the first of `cands` that builds, keeps off every support and holds new red:
     // true; CAP; aims (this group's tries are used up); or null (none built)
     const tryLines = (cands) => {
@@ -692,7 +758,7 @@ function fillOnce(topo, result, rot, opts, built) {
         stats.tries++;
         const r = drawnWall(c.a, c.b, tris, 0, drawOpts);
         const why = !r.ok ? r.reason.split(' — ')[0].split(' -- ')[0]
-          : others.hits(r.tris, PROP.sideClear, local, joined ? isFill : null) ? 'touches a support' : null;
+          : others.hits(r.tris, PROP.sideClear, local && shared, joined ? isFill : null) ? 'touches a support' : null;
         if (why) {
           stats.refused[why] = (stats.refused[why] ?? 0) + 1;
           // (the relaxation that let it through: on the part, on the plate, or joined)
@@ -700,18 +766,23 @@ function fillOnce(topo, result, rot, opts, built) {
           else if (relaxed && why === 'touches a support') { if (r.partAttached) partOk = false; else flangeOk = false; }
           continue;
         }
-        const reach = reachOf(r.top, R);
+        const reach = reachOf(r.top, R), reachIsland = reachOf(r.top, FILL.islandReach);
         let gain = 0;
-        for (const i of g) if (reach(live[i][0], live[i][1], live[i][2])) gain += live[i][3];
+        for (const i of g) {
+          const p = live[i];
+          if ((p.length > 4 ? reachIsland : reach)(p[0], p[1], p[2])) gain += p[3];
+        }
         if (gain < FILL.minGain) { stats.refused['holds no new red'] = (stats.refused['holds no new red'] ?? 0) + 1; continue; }
         keep(r, joined);
         return true;
       }
       return null;
     };
+    // a group of island starts alone: lines over them, not R beside them
+    const lineR = (ix) => (ix.every((i) => live[i].length > 4) ? FILL.islandReach : R);
     if (!local) {
       for (const bridge of [FILL.bridge, 2 * FILL.sample]) {
-        const r = tryLines(candidateLines(live, g, R, bridge));
+        const r = tryLines(candidateLines(live, g, lineR(g), bridge));
         if (r !== null) return r;
       }
       return aims ?? g;
@@ -724,9 +795,9 @@ function fillOnce(topo, result, rot, opts, built) {
       const sub = localPatch(live, rest);
       builds = 0;
       partOk = !plateOnly;
-      flangeOk = joinOk = true;
+      flangeOk = joinOk = !apart;
       // (one bridge: a patch is at most 2 x FILL.local across)
-      const r = tryLines(candidateLines(live, sub, R, FILL.bridge, true));
+      const r = tryLines(candidateLines(live, sub, lineR(sub), FILL.bridge, true));
       if (r === true || r === CAP) return r;
       for (const i of sub) dead.add(live[i]);
       const gone = new Set(sub);
@@ -753,12 +824,13 @@ function fillOnce(topo, result, rot, opts, built) {
   } else {
     // ROWS first (opts.longWalls): long walls along the model's length (fins/rows.js);
     // the patch lines below take what they leave
-    if (field) {
+    if (field && red.length) {
       // one heading for every row: the length at the bare red's centroid (none: x)
       let w = 0, x = 0, y = 0;
-      for (const p of pts) { w += p[3]; x += p[0] * p[3]; y += p[1] * p[3]; }
-      const r = rowWalls({ pts, heading: field(x / w, y / w) ?? 0, R, tris, drawOpts, minGain: FILL.minGain,
-        fits: (t) => !others.hits(t.tris, PROP.sideClear, true), keep: (t) => keep(t),
+      for (const p of red) { w += p[3]; x += p[0] * p[3]; y += p[1] * p[3]; }
+      // (the red only: a row is along the model's length, an island start is a point)
+      const r = rowWalls({ pts: red, heading: field(x / w, y / w) ?? 0, R, tris, drawOpts, minGain: FILL.minGain,
+        fits: (t) => !others.hits(t.tris, PROP.sideClear, shared), keep: (t) => keep(t),
         room: () => stats.walls < maxWalls, nFaces: topo.nFaces });
       stats.rows = r.walls;
       stats.rowBuilds = r.builds;
@@ -786,11 +858,31 @@ function fillOnce(topo, result, rot, opts, built) {
       if (r !== true) for (const i of r) dead.add(live[i]);
     }
   }
-  stats.ribs = braceFill(props, floors, triangles, tris, built.triangles ?? []);
+  stats.capped = full() && pts.some((p) => !held(p) && !dead.has(p));
+  // the red's bare as it stands now, before the island walls (which hold some too):
+  // what fillCoverage's rows-or-not pick reads, so that pick stays main's
+  const leftRed = red.filter((p) => !held(p));
+  // ISLAND STARTS, last (see the header): lines over each group, then patch by patch
+  if (isl.length) {
+    past = FILL.islandWalls;
+    for (const local of [false, true]) {
+      for (const p of isl) dead.delete(p);
+      while (!full()) {
+        const live = isl.filter(bare);
+        if (!live.length) break;
+        const r = wallFor(live, heaviest(live)[0], local);
+        if (r === CAP) break;
+        if (r !== true) for (const i of r) dead.add(live[i]);
+      }
+    }
+    // stopped on its budget with a start still untried: the card says so
+    stats.islandsCapped = full() && isl.some((p) => !held(p) && !dead.has(p));
+  }
+  stats.ribs = braceFill(props, floors, triangles, tris, built.triangles ?? [], shared);
   props.forEach((q, k) => { for (const [a, b] of q.triRanges.slice(1)) others.add(triangles.slice(a, b), { fill: true, k }); });
-  stats.ties = tieFill(props, floors, triangles, tris, others);
-  const left = pts.filter((p) => !near(p[0], p[1], p[2]));
-  stats.capped = full() && left.some((p) => !dead.has(p));
+  stats.ties = tieFill(props, floors, triangles, tris, others, shared);
+  const leftIsl = isl.filter((p) => !held(p));
   return { triangles, props, tines,
-           unserved: { area: left.reduce((s, p) => s + p[3], 0), pts: left.map((p) => [p[0], p[1], p[2]]) }, stats };
+           unserved: { area: leftRed.reduce((s, p) => s + p[3], 0), pts: leftRed.map((p) => [p[0], p[1], p[2]]),
+                       islands: startsIn(leftIsl), islandPts: leftIsl.map((p) => [p[0], p[1], p[2]]) }, stats };
 }

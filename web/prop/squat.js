@@ -12,6 +12,7 @@ import { PROP } from './config.js';
 import { settleTop } from './contact.js';
 import { stemHalf } from './sweep.js';
 import { crestCut, crestKinds, dropCollapsed, emitCrest } from './crest.js';
+import { windowedFlange } from './resinfoot.js';
 
 /**
  * Sweep a SQUAT breakaway wall: a thin wall necking to the breakaway tip, on a
@@ -20,9 +21,14 @@ import { crestCut, crestKinds, dropCollapsed, emitCrest } from './crest.js';
  * thin WIDE brim instead: two layers tall (snaps off, leaves no part mark since it
  * sits on the plate), wide enough to grip. Two overlapping solids the slicer
  * unions, exactly like `sweep`'s wall + flange.
+ *
+ * `inset` (optional, mm per station) narrows the stem, its tip and the brim on each
+ * side there: a stretch that runs inside a full wall's stem (draw.js's mixed run), or
+ * past another squat run's, would otherwise have the same section and meet it face
+ * on face, flush instead of overlapping.
  */
-export function sweepSquat(line, zBed, out) {
-  const wall = [], brim = [], crest = [];
+export function sweepSquat(line, zBed, out, inset = null) {
+  const wall = [], brim = [], crest = [], feet = [];
   const kinds = crestKinds(line);          // the interface crest's plan, null when off
   const brimTop = zBed + PROP.squatBrimH;
   for (let i = 0; i < line.length; i++) {
@@ -42,10 +48,11 @@ export function sweepSquat(line, zBed, out) {
     const ztip = Math.max(top - PROP.tipH, brimTop + 0.05);
     const P = (o, z) => [p[0] + sx * o, p[1] + sy * o, z];
     // where the interface crest runs, the stem stops at the crest's cut
-    const sh = stemHalf(top - ztip);   // no wider than its neck can climb from (044)
-    const c = crestCut(top, ztip, brimTop, kinds?.[i], 2 * sh);
+    const inn = inset?.[i] ?? 0;
+    const sh = stemHalf(top - ztip) - inn;   // no wider than its neck can climb from (044)
+    const c = crestCut(top, ztip, brimTop, kinds?.[i], 2 * sh, PROP.tip - 2 * inn);
     crest.push(c?.ring(P) ?? null);
-    const [zt, zTop, wTop] = c ? [c.zt, c.cut, c.wc] : [ztip, top, PROP.tip / 2];
+    const [zt, zTop, wTop] = c ? [c.zt, c.cut, c.wc] : [ztip, top, PROP.tip / 2 - inn];
 
     // the stem: bed to breakaway tip, th-wide then necking to the contact tip
     wall.push([
@@ -53,14 +60,16 @@ export function sweepSquat(line, zBed, out) {
       P(-wTop, zTop), P(-sh, zt), P(-sh, zBed),
     ]);
     // the brim: a thin flat slab overlapping the wall's base, for plate grip
-    brim.push([
-      P(+PROP.squatBrimW, zBed), P(+PROP.squatBrimW, brimTop),
-      P(-PROP.squatBrimW, brimTop), P(-PROP.squatBrimW, zBed),
-    ]);
+    const bw = PROP.squatBrimW - inn;
+    brim.push([P(+bw, zBed), P(+bw, brimTop), P(-bw, brimTop), P(-bw, zBed)]);
+    feet.push({ p, sx, sy, foot: bw, sh, zBed, baseTop: brimTop });
   }
   const from = out.length;
   ribbon(wall, out);
-  ribbon(brim, out);
+  // resin pins (#309): a windowed brim, so it flexes off a resin plate (not on an
+  // inset run, whose brim is narrowed to stay off its neighbour's; Draw passes an
+  // all-zero inset on an all-squat line)
+  if (PROP.tineDir !== 'vertical' || inset?.some((v) => v > 0) || !windowedFlange(feet, out)) ribbon(brim, out);
   if (kinds) { dropCollapsed(out, from); emitCrest(crest, out); }
   return true;
 }

@@ -7,14 +7,14 @@ import { t, tn } from './i18n.js';
 import * as THREE from 'three';
 import { buildTopology, analyze, DEFAULT_THRESHOLD, MIN_REGION_AREA } from '../overhangs.js';
 import { el } from './dom.js';
-import { scene, controls, frame, clip, MODEL } from './scene.js';
+import { scene, controls, frame, clip, MODEL, requestRender } from './scene.js';
 import { setSection, followPart } from './section.js';
 import { showToolbar } from './toolbar.js';
 import { removeMode, cancelRemove, resetRemovals } from './remove.js';
 import { resetHistory } from './history.js';
-import { importNote, renderImportNote } from './io.js';
+import { importNote, renderImportNote, forgetImport } from './io.js';
 import { currentVolume } from './volume.js';
-import { resetLoad, updateLayerView, updateLoadReadout, syncLoadUI } from './strength.js';
+import { resetLoad, updateLayerView, hideLayerView, updateLoadReadout, syncLoadUI } from './strength.js';
 import { hideSuggestions } from './suggest.js';
 import {
   setDrawnWalls, setDrawMsg, markPrintTrisDirty, clearPreview, syncDrawControls,
@@ -22,6 +22,10 @@ import {
 import { activeAdded, refreshFins, markFinsStale } from './finbuild.js';
 import { finsVisible, highlightSmall, setDrawAugment, syncAugmentUI } from './settings.js';
 import { gizmo, hoverFace, setGizmo, setLayPlacing } from './pose.js';
+import { resetScale } from './scale.js';
+import { updateIslands, renderIslandText, hadIslands } from './islands.js';
+import { liveXY, parkedOff } from './models.js';
+import { checkOverlap, overlapping } from './arrange.js';
 
 const partMaterial = new THREE.MeshStandardMaterial({
   color: 0xffffff, roughness: 0.62, metalness: 0.05,
@@ -58,9 +62,10 @@ let painted = null, paintedAttr = null;
 
 /**
  * Drop `geometry` onto the plate: centred in XY, its lowest point resting on
- * z=0. Returns the measured size so the caller can report it.
+ * z=0. Returns the measured size so the caller can report it. `quat` (a rescale,
+ * ui/scale.js) keeps the pose; a new file starts unturned, at 100 %.
  */
-export function setPart(geometry, filename) {
+export function setPart(geometry, filename, { quat } = {}) {
   if (part) {
     part.geometry.dispose();
     scene.remove(part);
@@ -101,11 +106,27 @@ export function setPart(geometry, filename) {
   computeFlatBaseline();
 
   partName = filename;
-  part.quaternion.identity();
+  if (quat) part.quaternion.copy(quat);
+  else part.quaternion.identity();
   gizmo.attach(part);
   showToolbar(true);
 
-  // A new part starts with no hand-drawn walls and a fresh print-space cache.
+  resetPartState();
+
+  const size = shade();
+  frame(size);
+  resetScale();
+  document.dispatchEvent(new Event('partchange'));   // the plate tabs (ui/plates.js)
+  return size;
+}
+
+/**
+ * What a part's tools hold that means nothing on another part (or on none): the
+ * drawn walls, removed fins, armed modes, load arrow, Suggest list, section cut and
+ * undo history. Shared by setPart and clearPart.
+ */
+function resetPartState() {
+  // A new part (or none) starts with no hand-drawn walls and a fresh print-space cache.
   setDrawnWalls([]);
   // Per-fin removals are keyed by a content signature that can coincidentally
   // match a different model's fins, so they must NOT carry across parts -- clear
@@ -120,7 +141,7 @@ export function setPart(geometry, filename) {
   clearPreview();
   syncAugmentUI();       // "+ Add" is off now: the button and the Draw hint say so
   syncDrawControls();
-  // A new part starts with no load direction either, and no Suggest ranking: the
+  // A new part (or none) starts with no load direction either, and no Suggest ranking: the
   // list and verdict were the OLD part's poses.
   resetLoad();
   hideSuggestions();
@@ -132,9 +153,77 @@ export function setPart(geometry, filename) {
 
   // Undo history does not carry across parts.
   resetHistory();
+}
 
+/**
+ * Take the part off the plate (the stats card's Remove model): back to the empty
+ * page a fresh tab shows, so the next model needs no reload. The fin settings stay,
+ * as they do across a load.
+ */
+export function clearPart() {
+  stashPart()?.mesh.geometry.dispose();
+}
+
+/**
+ * Take the part off the screen WITHOUT disposing it, for another plate (ui/plates.js):
+ * the mesh keeps its geometry and pose, the topology its weld, so coming back costs
+ * no reload. The page is left as clearPart leaves it. Null when there is no part.
+ */
+export function stashPart() {
+  if (!part) return null;
+  const rec = { mesh: part, topology, name: partName, weldMs };
+  gizmo.detach();
+  part.remove(hoverFace);
+  hoverFace.visible = false;
+  scene.remove(part);
+  part = null;
+  topology = null;
+  lastResult = lastShadeRes = null;
+  flatRegions = null;
+  painted = paintedAttr = null;
+  lastSize = null;
+  partName = '';
+  resetPartState();
+  refreshFins();           // no lastResult now: drops the fins, pad and readout
+  updateIslands(null, null, null, new THREE.Vector3(), false);   // and the midair cones
+  resetScale();
+  forgetImport();
+  hideLayerView();
+  showToolbar(false);
+  el('stats').hidden = true;
+  el('status').hidden = true;
+  el('drop').classList.remove('hidden');
+  // the whole bare plate in view, not the spot the part sat on
+  const v = currentVolume();
+  frame(new THREE.Vector3(v.x * 0.7, v.y * 0.7, 0));
+  requestRender();
+  document.dispatchEvent(new Event('partchange'));   // the plate tabs (ui/plates.js)
+  return rec;
+}
+
+/**
+ * Put a stashed part (stashPart) back on the screen, as setPart would a new one but
+ * with no re-weld: it comes back in the pose it left in, with nothing drawn on it
+ * -- ui/plates.js restores its walls, settings and history after.
+ */
+export function unstashPart(rec) {
+  if (part) clearPart();
+  part = rec.mesh;
+  part.material = partMaterial;     // parked, it wore the row's dimmed look
+  topology = rec.topology;
+  partName = rec.name;
+  weldMs = rec.weldMs;
+  part.add(hoverFace);
+  hoverFace.visible = false;
+  scene.add(part);
+  computeFlatBaseline();
+  gizmo.attach(part);
+  showToolbar(true);
+  resetPartState();
+  resetScale();
   const size = shade();
   frame(size);
+  document.dispatchEvent(new Event('partchange'));   // the plate tabs (ui/plates.js)
   return size;
 }
 
@@ -214,6 +303,7 @@ export function paintOverhangs(res = lastResult) {
     sOver.append(' (+', sw, `${tn('{n} sliver', '{n} slivers', dropped)})`);
   }
   sOver.classList.toggle('good', res.regions.length === 0 && !dropped);
+  renderIslandText();
 
   // Overhang warning (bottom-right card). The tool builds support for the big
   // overhang REGIONS but drops the small ones -- hole ceilings, slot roofs, a
@@ -224,14 +314,10 @@ export function paintOverhangs(res = lastResult) {
   // card; the sliver count in the readout above stays.
   const warn = el('over-warn');
   if (dropped > 0 && highlightSmall) {
-    const one = dropped === 1;
-    const deText = `⚠ ${dropped} ${one ? 'Überhang' : 'Überhänge'} in Bernstein ${one ? 'ist' : 'sind'} `
-      + `zu klein für eine Finne (unter ${MIN_REGION_AREA} mm²), ${one ? 'wird' : 'werden'} daher in dieser Lage stützenlos `
-      + `gedruckt und können rau werden. Versuchen Sie „Ausrichtung vorschlagen“, um sie nach oben zu drehen.`;
-    const enText = `⚠ ${dropped} overhang${one ? '' : 's'} shaded amber ${one ? 'is' : 'are'} `
-      + `too small for a fin (under ${MIN_REGION_AREA} mm² each), so ${one ? 'it prints' : 'they print'} `
-      + `unsupported this way up and may come out rough. Try Suggest orientation to point `
-      + `${one ? 'it' : 'them'} up.`;
+    warn.textContent = tn(
+      '⚠ {n} overhang shaded amber is too small for a fin (under {area} mm² each), so it prints unsupported this way up and may come out rough. Try Suggest orientation to point it up.',
+      '⚠ {n} overhangs shaded amber are too small for a fin (under {area} mm² each), so they print unsupported this way up and may come out rough. Try Suggest orientation to point them up.',
+      dropped, { area: MIN_REGION_AREA });
   } else {
     warn.textContent = '';
   }
@@ -256,6 +342,7 @@ export function shade() {
   const size = new THREE.Vector3(res.size.x, res.size.y, res.size.z);
   report(partName, size);
 
+  const isl = updateIslands(topology, res, rotM3.elements, res.size, gizmo.dragging);
   paintOverhangs(res);
   const dropped = res.rawRegionCount - res.regions.length;
   el('s-overarea').textContent = `${res.overArea.toFixed(0)} mm²`;
@@ -266,7 +353,10 @@ export function shade() {
   // on. Current pose clean wins outright; otherwise, if the part printed flat as
   // loaded, the overhangs on screen are self-inflicted by rotating.
   const flat = el('s-flat-note');
-  if (res.regions.length === 0) {
+  if (res.regions.length === 0 && (isl.length || (gizmo.dragging && hadIslands()))) {
+    // no red, but a start in midair: not "no supports needed" (the card says why)
+    flat.textContent = '';
+  } else if (res.regions.length === 0) {
     flat.textContent = dropped ? t('Nothing big enough for a fin this way up.') : t('No supports needed this way up.');
     flat.className = 'note good';
   } else if (flatRegions === 0) {
@@ -350,6 +440,7 @@ function report(filename, size) {
   el('stats').hidden = false;
   el('status').hidden = false;
   el('drop').classList.add('hidden');
+  el('drop').classList.add('compact');   // from now on an empty plate shows no intro
 }
 
 /**
@@ -363,29 +454,30 @@ function report(filename, size) {
 export function updateFit() {
   if (!lastSize) return;
   const v = currentVolume();
-  let dx = lastSize.x, dy = lastSize.y, dz = lastSize.z;
-
+  // the part is centred on its spot (analyze seats it so), the fins wherever they reach
+  let x0 = -lastSize.x / 2, x1 = lastSize.x / 2, y0 = -lastSize.y / 2, y1 = lastSize.y / 2, z1 = lastSize.z;
   const added = activeAdded();
-  if (added.length) {
-    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity, z1 = -Infinity;
-    for (const t of added) {
-      if (t[0] < x0) x0 = t[0]; if (t[0] > x1) x1 = t[0];
-      if (t[1] < y0) y0 = t[1]; if (t[1] > y1) y1 = t[1];
-      if (t[2] > z1) z1 = t[2];
-    }
-    // the part is centred on the plate, so what matters is the half-extent each
-    // way, not the raw span of the fins alone
-    dx = Math.max(dx, 2 * Math.max(Math.abs(x0), Math.abs(x1)));
-    dy = Math.max(dy, 2 * Math.max(Math.abs(y0), Math.abs(y1)));
-    dz = Math.max(dz, z1);
+  for (const p of added) {
+    if (p[0] < x0) x0 = p[0]; if (p[0] > x1) x1 = p[0];
+    if (p[1] < y0) y0 = p[1]; if (p[1] > y1) y1 = p[1];
+    if (p[2] > z1) z1 = p[2];
   }
-
-  const over = dx > v.x || dy > v.y || dz > v.z;
+  const big = x1 - x0 > v.x || y1 - y0 > v.y || z1 > v.z;
+  // where it stands on the plate (ui/move.js): a model that would fit can hang off,
+  // and so can a parked one dragged there
+  const [mx, my] = liveXY(), e = 1e-6;
+  const off = !big && (x0 + mx < -v.x / 2 - e || x1 + mx > v.x / 2 + e || y0 + my < -v.y / 2 - e
+    || y1 + my > v.y / 2 + e || parkedOff());
+  // not per frame of a turn on the rings: a big part's cells take tens of ms, and
+  // the release shades (and checks) again
+  if (!gizmo.dragging) checkOverlap();
+  const clash = overlapping();
   const fit = el('s-fit');
-  fit.textContent = over
+  fit.textContent = big
     ? t(added.length ? 'does not fit (with fins)' : 'does not fit')
-    : t('fits');
-  fit.classList.toggle('warn', over);
+    : off && clash ? `${t('models overlap')} · ${t('hangs off the bed')}`
+      : off ? t('hangs off the bed') : clash ? t('models overlap') : t('fits');
+  fit.classList.toggle('warn', big || off || clash);
 }
 
 export let lastResult = null;
@@ -422,6 +514,7 @@ export function syncPartLanguage() {
     sw.title = t('Amber: overhangs under {area} mm², too small for a fin', { area: MIN_REGION_AREA });
     sOver.append(' (+', sw, `${tn('{n} sliver', '{n} slivers', dropped)})`);
   }
+  renderIslandText();
 }
 
 window.addEventListener('languagechange', syncPartLanguage);

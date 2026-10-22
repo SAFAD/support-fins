@@ -9,6 +9,7 @@ import * as THREE from 'three';
 import { drawnWall } from '../draw.js';
 import { planGrid } from '../fins/tall.js';
 import { swayAtFace, faceIsUpright } from '../sway.js';
+import { initBraceGhost, showBrace, moveTip, hideBrace, dropBrace, braceGrace } from './braceghost.js';
 import { el } from './dom.js';
 import { viewport, renderer, scene, camera, meshFrom, ifaceMaterial, raycaster, pointer, clip, MODEL } from './scene.js';
 import { keptHit } from './section.js';
@@ -63,13 +64,15 @@ const guideMat = (color) => new THREE.MeshBasicMaterial(
 const drawDot = new THREE.Mesh(new THREE.SphereGeometry(1, 20, 14), guideMat(0x59d98e));
 // The cursor is see-through so the surface under it stays readable; the OS
 // crosshair is the precise aim point, this dot just shows the surface hit.
+const CURSOR_OK = 0xcffbe4;   // braceghost.js eases it to amber on a refused brace spot
 const drawCursor = new THREE.Mesh(new THREE.SphereGeometry(1, 20, 14),
-  new THREE.MeshBasicMaterial({ color: 0xcffbe4, depthTest: false, transparent: true, opacity: 0.6 }));
+  new THREE.MeshBasicMaterial({ color: CURSOR_OK, depthTest: false, transparent: true, opacity: 0.6 }));
 const bandGeom = new THREE.BufferGeometry()
   .setFromPoints([new THREE.Vector3(), new THREE.Vector3()]);
 const drawBand = new THREE.Line(bandGeom,
   new THREE.LineBasicMaterial({ color: 0x6dffab, depthTest: false, transparent: true }));
 drawBand.frustumCulled = false;   // its endpoints move every frame; stale bounds would cull it
+initBraceGhost(drawCursor.material);
 for (const o of [drawDot, drawCursor, drawBand]) {
   o.visible = false;
   o.renderOrder = 11;             // above the hoverFace (renderOrder 1) and the part
@@ -79,6 +82,11 @@ for (const o of [drawDot, drawCursor, drawBand]) {
 // Pointer is in wall-placement mode (draw mode, or Suggest with the add toggle on).
 // Gates the draw interaction, the gizmo, and face-lay.
 export const drawActive = () => finsVisible && (finMode === 'draw' || drawAugment);
+// Auto / Full with Sway braces on: the pointer stands braces on upright sides
+// (hover previews, a click stands one) without "+ Add walls by hand". Every other
+// click still just orbits -- the ghost shows before the click, and Ctrl-Z takes
+// a brace back, so a stray click is never a silent change.
+export const braceActive = () => finsVisible && autoLike() && !drawAugment && el('sway').checked;
 // Hand-drawn walls contribute to the display and the export. In Draw mode that's
 // always; in Suggest it's whenever the user has drawn any (they persist after the
 // add toggle is switched off, so you can orbit and export without losing them).
@@ -101,9 +109,14 @@ export function sizeMarkers() {
  *  the same transform export bakes in. */
 function partPrintTriangles() {
   if (printTris && !printTrisDirty) return printTris;
+  printTris = printTriangles(topology, rotM3.elements, lastResult.offset);
+  printTrisDirty = false;
+  return printTris;
+}
+
+/** `topology` posed `rot` and seated at `offset` (analyze's), as one flat array. */
+export function printTriangles(topology, rot, { x: dx, y: dy, z: dz }) {
   const { pos, nFaces } = topology;
-  const rot = rotM3.elements;
-  const { x: dx, y: dy, z: dz } = lastResult.offset;
   const a = new Float64Array(nFaces * 9);
   for (let i = 0; i < a.length; i += 3) {
     const x = pos[i], y = pos[i + 1], z = pos[i + 2];
@@ -111,8 +124,6 @@ function partPrintTriangles() {
     a[i + 1] = rot[1] * x + rot[4] * y + rot[7] * z + dy;
     a[i + 2] = rot[2] * x + rot[5] * y + rot[8] * z + dz;
   }
-  printTris = a;
-  printTrisDirty = false;
   return a;
 }
 
@@ -120,7 +131,13 @@ function partPrintTriangles() {
 export function clearPreview() {
   drawStart = null;
   drawDot.visible = drawCursor.visible = drawBand.visible = false;
+  dropGhost();
+}
+
+function dropGhost() {
   if (ghostMesh) { scene.remove(ghostMesh); ghostMesh.geometry.dispose(); ghostMesh = null; }
+  braceShown = null;
+  dropBrace();
 }
 
 /** Rebuild the committed drawn walls for the current orientation. */
@@ -129,71 +146,89 @@ export function rebuildDrawn() {
   drawnTris = [];
   if (!drawShown() || !topology || !lastResult) { syncSelection(); return; }
   part.updateMatrixWorld();
+  drawnTris = sweepDrawn({
+    topology, res: lastResult, rot: rotM3.elements, tris: partPrintTriangles(), walls: drawnWalls,
+    toWorld: (v, out) => part.localToWorld(out.copy(v)),
+    auto: finsVisible && autoLike() ? lastBuilt : null, gone: removedIds,
+  });
+  drawnMesh = meshFrom(drawnTris, drawMaterial, ifaceMaterial);
+  braceMemo.stamp = null;   // the braces a preview stands clear of have moved
+  if (braceShown) dropGhost();
+  syncSelection();
+}
 
+/**
+ * Stand a model's hand-placed supports for its pose, under the settings on the
+ * page: the live model's (rebuildDrawn) or a parked one's (ui/parkedbuild.js).
+ * Sets each wall's ok / info / triangle range and returns the triangles. `ctx`:
+ * { topology, res, rot, tris (the part in print space), walls, toWorld(local, out),
+ * auto (Auto's build on screen, or null), gone (its removed fin ids) }.
+ */
+export function sweepDrawn({ topology, res, rot, tris, walls, toWorld, auto: built, gone }) {
+  const out = [];
   // Both Draw and the Suggest "+ Add" augment place the SAME thing now: hand-drawn
   // under-overhang breakaway walls. Each wall is stored as two local endpoints and
   // re-swept against the part's current pose, so a wall that no longer reaches the
   // part (rotated away) is flagged by drawnWall rather than dropped silently.
-  const tris = partPrintTriangles();
   // Drawn walls grip with the same tine comb the auto fins use when Tines is on.
   const drawOpts = { tines: el('tines').checked,
                      tineDensity: el('tine-density').valueAsNumber / 100,
                      layerHeight: el('layer-height').valueAsNumber,
                      plateOnly: el('plate-only').checked,
                      braceTall: el('tall-ribs').checked,
-                     topo: topology, rot: rotM3.elements, offset: lastResult.offset };
+                     topo: topology, rot, offset: res.offset };
   // A tall drawn wall's ribs keep sideClear off the walls drawn before it and off
   // Auto's supports and pad when they're on screen (draw.js braceTall): a rib fused
   // into a neighbour no longer breaks away by itself. (Walls drawn later don't check
   // back -- drawn walls never check each other -- and Auto's ribs, built in the
   // Worker, can't see drawn walls.)
   const ribGrid = planGrid();
-  if (finsVisible && autoLike() && lastBuilt) {
-    for (const rec of lastBuilt.fins ?? []) {
-      if (removedIds.has(rec.id)) continue;
-      for (const [a, b] of rec.triRanges ?? []) ribGrid.add(lastBuilt.triangles.slice(a, b), 'auto');
+  if (built) {
+    for (const rec of built.fins ?? []) {
+      if (gone.has(rec.id)) continue;
+      for (const [a, b] of rec.triRanges ?? []) ribGrid.add(built.triangles.slice(a, b), 'auto');
     }
-    if (lastBuilt.padTriangles?.length) ribGrid.add(lastBuilt.padTriangles, 'auto');
+    if (built.padTriangles?.length) ribGrid.add(built.padTriangles, 'auto');
   }
   let gridded = 0;
   drawOpts.braceClear = (rib) => {
-    ribGrid.add(drawnTris.slice(gridded));   // walls drawn since the last rib
-    gridded = drawnTris.length;
+    ribGrid.add(out.slice(gridded));   // walls drawn since the last rib
+    gridded = out.length;
     return !ribGrid.hits(rib);
   };
   const wa = new THREE.Vector3(), wb = new THREE.Vector3();
   // Everything a hand-placed brace has to keep clear of: Auto's braces and walls
   // (when Auto's supports are on screen), then each hand-placed brace as it is
   // re-stood, so a rotation that brings two together is reported rather than fused.
-  const auto = autoSupports();
+  const auto = autoSupports(built, gone);
   const braces = [...auto.braces];
-  for (const w of drawnWalls) {
+  for (const w of walls) {
     // Each support remembers which triangles of the merged mesh are its own, so a
     // click on the mesh can be traced back to the support to select / remove.
-    w.triStart = drawnTris.length / 3;
+    w.triStart = out.length / 3;
     if (w.kind === 'sway') {
       // A hand-placed sway brace: re-stood on the same face at the same spot, so
       // it follows the part when it turns (and says why if that face no longer
-      // stands upright, or now runs into an earlier brace).
-      part.localToWorld(wa.copy(w.a));
-      const r = swayAtFace(topology, lastResult, rotM3.elements, w.face,
-                           [wa.x, wa.y, wa.z], swayOpts(), { braces, walls: auto.walls });
+      // stands upright, or now runs into an earlier brace). A capped one stops at
+      // its clicked point's height; the rest run up the whole face.
+      toWorld(w.a, wa);
+      const r = swayAtFace(topology, res, rot, w.face,
+                           [wa.x, wa.y, wa.z], { ...swayOpts(), full: !w.capped }, { braces, walls: auto.walls });
       w.ok = r.ok;
       w.info = r;
-      if (r.ok) { braces.push(r); for (const t of r.tris) drawnTris.push(t); }
-      w.triEnd = drawnTris.length / 3;
+      if (r.ok) { braces.push(r); for (const t of r.tris) out.push(t); }
+      w.triEnd = out.length / 3;
       continue;
     }
-    part.localToWorld(wa.copy(w.a));
-    part.localToWorld(wb.copy(w.b));
+    toWorld(w.a, wa);
+    toWorld(w.b, wb);
     const r = drawnWall([wa.x, wa.y, wa.z], [wb.x, wb.y, wb.z], tris, 0, drawOpts);
     w.ok = r.ok;
     w.info = r;
-    if (r.ok) for (const t of r.tris) drawnTris.push(t);
-    w.triEnd = drawnTris.length / 3;
+    if (r.ok) for (const t of r.tris) out.push(t);
+    w.triEnd = out.length / 3;
   }
-  drawnMesh = meshFrom(drawnTris, drawMaterial, ifaceMaterial);
-  syncSelection();
+  return out;
 }
 
 // ---- selecting a hand-placed support, to remove it -------------------------
@@ -260,6 +295,7 @@ export function removeSelected() {
   selectedWall = null;
   drawMsg = '';
   rebuildDrawn();
+  syncDrawControls();   // the last one gone in Auto hides Clear again
   updateReadout(lastBuilt);
   updateFit();
 }
@@ -328,13 +364,13 @@ function placeSecondPoint(hitPoint) {
  * away. Empty unless Auto's supports are actually on screen, and fins the user has
  * removed are left out -- they aren't there to hit.
  */
-function autoSupports() {
-  if (!finsVisible || !autoLike() || !lastBuilt) return { braces: [], walls: [] };
-  const outlines = lastBuilt.sway?.braces ?? [];
+function autoSupports(built = finsVisible && autoLike() ? lastBuilt : null, removed = removedIds) {
+  if (!built) return { braces: [], walls: [] };
+  const outlines = built.sway?.braces ?? [];
   const braces = [], walls = [];
   let k = 0;   // sway records and their outlines are emitted in the same order
-  for (const rec of lastBuilt.fins ?? []) {
-    const gone = removedIds.has(rec.id);
+  for (const rec of built.fins ?? []) {
+    const gone = removed.has(rec.id);
     if (rec.kind === 'sway') {
       const outline = outlines[k++];
       if (outline && !gone) braces.push(outline);
@@ -345,14 +381,104 @@ function autoSupports() {
   return { braces, walls };
 }
 
-/** Stand a sway brace on the upright face the user clicked. One click, no second point. */
-function placeSway(hit) {
+// ---- sway brace preview: hover an upright side to see what a click stands ----
+// The ghost IS the brace the click builds (both go through braceAt). Its top follows
+// the cursor; in the top quarter of what a brace could reach there it snaps to the
+// whole face, the height a brace always had before the clicked-height cap. A spot
+// that can't take one turns the cursor amber and says why, before any click.
+// braceghost.js fades and eases what this shows, so moving about doesn't flash.
+const SNAP_TOP = 0.75;
+const STEP_Z = 1;   // capped tops in 1 mm steps, so a creeping cursor reuses its ghost
+const MEMO_MAX = 200;
+let braceMemo = { stamp: null, map: new Map() };
+let braceShown = null;   // the braceAt key the ghost and tip show now
+let braceQueued = null;
+
+/**
+ * The brace a click at print-space point `p` on face `faceIndex` stands, as
+ * { r: swayAtFace's result, full, point, key }: `point` is the spot it stands at
+ * (x, y to the mm, a capped top to STEP_Z), which placeSway stores. Memoised until
+ * the pose, the settings or the supports it stands clear of change.
+ */
+function braceAt(faceIndex, p) {
+  const opts = swayOpts();
+  const stamp = [lastResult, lastBuilt, removedIds, drawnWalls, drawnWalls.length, finsVisible, autoLike(),
+                 rotM3.elements.join(), JSON.stringify(opts)];
+  if (!braceMemo.stamp || braceMemo.stamp.some((v, i) => v !== stamp[i])) braceMemo = { stamp, map: new Map() };
+  const memo = (key, f) => {
+    const m = braceMemo.map;
+    if (!m.has(key)) {
+      m.set(key, f());
+      if (m.size > MEMO_MAX) m.delete(m.keys().next().value);   // oldest first
+    }
+    return m.get(key);
+  };
   const auto = autoSupports();
-  const standing = [...auto.braces,
-                    ...drawnWalls.filter((w) => w.kind === 'sway' && w.ok).map((w) => w.info)];
-  const r = swayAtFace(topology, lastResult, rotM3.elements, hit.faceIndex,
-                       [hit.point.x, hit.point.y, hit.point.z], swayOpts(),
-                       { braces: standing, walls: auto.walls });
+  const avoid = { braces: [...auto.braces, ...drawnWalls.filter((w) => w.kind === 'sway' && w.ok).map((w) => w.info)],
+                  walls: auto.walls };
+  // x, y to the mm, slid back onto the face's plane: the stored point has to stay on
+  // the face, or a reopened session's nearestFace can pick the one beside it
+  const n = topology.nrm, r = rotM3.elements, f = faceIndex * 3;
+  const nx = r[0] * n[f] + r[3] * n[f + 1] + r[6] * n[f + 2], ny = r[1] * n[f] + r[4] * n[f + 1] + r[7] * n[f + 2];
+  const rx = Math.round(p[0]), ry = Math.round(p[1]), off = ((rx - p[0]) * nx + (ry - p[1]) * ny) / (nx * nx + ny * ny || 1);
+  const x = rx - off * nx, y = ry - off * ny, at = `${faceIndex}|${rx}|${ry}`;
+  const full = memo(at, () => swayAtFace(topology, lastResult, rotM3.elements, faceIndex, [x, y, p[2]],
+                                         { ...opts, full: true }, avoid));
+  if (!full.ok || p[2] >= SNAP_TOP * full.height) return { r: full, full: true, point: [x, y, p[2]], key: at };
+  const z = Math.max(STEP_Z, Math.round(p[2] / STEP_Z) * STEP_Z), key = `${at}|${z}`;
+  return { r: memo(key, () => swayAtFace(topology, lastResult, rotM3.elements, faceIndex, [x, y, z], opts, avoid)),
+           full: false, point: [x, y, z], key };
+}
+
+/** Hovering an upright side with Sway braces on: ghost + tip for the brace a click there stands. */
+function updateBracePreview(hit, ev) {
+  drawCursor.position.copy(hit.point);
+  drawCursor.visible = true;
+  drawBand.visible = drawDot.visible = false;
+  moveTip(ev.clientX + 16, ev.clientY + 16);
+  // at most one brace build per frame, as the wall ghost
+  const already = !!braceQueued;
+  braceQueued = { face: hit.faceIndex, p: [hit.point.x, hit.point.y, hit.point.z] };
+  if (already) return;
+  requestAnimationFrame(() => {
+    const q = braceQueued;
+    braceQueued = null;
+    if (!q || drawStart || !(drawActive() || braceActive())) return;
+    const b = braceAt(q.face, q.p);
+    if (b.key === braceShown) return;
+    braceShown = b.key;
+    const mm = Math.round(b.r.height ?? 0);
+    showBrace(b.r.ok ? b.r.tris : null, b.r.height ?? 0,
+              !b.r.ok ? t(b.r.reason)
+              : b.full ? t('Brace · full height {mm} mm', { mm })
+              : t('Brace · {mm} mm · move up for full height', { mm }),
+              !b.r.ok);
+  });
+}
+
+renderer.domElement.addEventListener('pointerleave', () => {
+  braceQueued = null;
+  if (!drawStart) { drawCursor.visible = false; braceShown = null; hideBrace(false); }
+});
+
+/** The pointer is on the part but off an upright side: the dot follows it, and the
+ *  brace stays a moment (an edge or a small facet on the way) before it fades. */
+function slipOff(hit, keepCursor) {
+  braceQueued = null;
+  // back on the part inside a grace begun off it: Draw's cursor stays after all
+  if (!braceShown && keepCursor && braceGrace()) hideBrace(true, null);
+  if (!braceShown) return false;
+  braceShown = null;
+  drawCursor.position.copy(hit.point);
+  hideBrace(true, keepCursor ? null : () => { drawCursor.visible = false; });
+  return true;
+}
+
+/** Stand a sway brace on the upright face the user clicked: the one its preview showed. */
+function placeSway(hit) {
+  braceQueued = null;
+  const { r, full, point } = braceAt(hit.faceIndex, [hit.point.x, hit.point.y, hit.point.z]);
+  dropGhost();
   if (!r.ok) {
     drawMsg = t('couldn’t place that brace: {reason}', { reason: t(r.reason) });
     updateReadout(lastBuilt);
@@ -361,8 +487,10 @@ function placeSway(hit) {
   drawMsg = '';
   histPush();
   part.updateMatrixWorld();
-  drawnWalls.push({ kind: 'sway', face: hit.faceIndex, a: part.worldToLocal(hit.point.clone()) });
+  drawnWalls.push({ kind: 'sway', face: hit.faceIndex, ...(full ? {} : { capped: true }),
+                    a: part.worldToLocal(new THREE.Vector3(point[0], point[1], point[2])) });
   rebuildDrawn();
+  syncDrawControls();   // Auto's first brace by hand brings up Clear / Remove selected
   updateReadout(lastBuilt);
   updateFit();
 }
@@ -372,7 +500,7 @@ function placeSway(hit) {
 export function syncDrawControls() {
   el('draw-controls').hidden = !drawShown();
   el('draw-hint').hidden = !drawActive();
-  el('draw-hint').innerHTML = t('Click two points across an overhang — straight onto the red faces — to lay a breakaway wall along that line. Click an upright side once to stand a sway brace against it. Esc or right-click cancels.');
+  el('draw-hint').innerHTML = t('Click two points across an overhang — straight onto the red faces — to lay a breakaway wall along that line. Hover an upright side to preview a sway brace: its top follows the cursor, and near the top of the side it runs full height. Click to stand it. Esc or right-click cancels.');
 }
 
 // Clear acts on the hand-drawn breakaway walls -- the thing both Draw and the
@@ -398,15 +526,83 @@ export function markPrintTrisDirty() { printTrisDirty = true; }
 /** Pointer move: the cursor, band and ghost wall track the surface under it. */
 export function drawHover(ev) {
   const hit = pickFace(ev);
-  if (hit) {
+  if (hit && swayHit(hit)) {
+    updateBracePreview(hit, ev);
+    renderer.domElement.style.cursor = 'crosshair';
+  } else if (hit) {
+    slipOff(hit, true);   // Draw's own cursor carries on over the rest of the part
     updatePreview(hit.point);
     renderer.domElement.style.cursor = 'crosshair';
+  } else if (!drawStart) {
+    drawBand.visible = false;
+    braceAway();   // off the part: a gap crossed on the way doesn't blink the brace
+    renderer.domElement.style.cursor = '';
   } else {
+    braceQueued = null;
     drawCursor.visible = drawBand.visible = false;
+    braceShown = null;
+    hideBrace(false);
     if (ghostMesh) { scene.remove(ghostMesh); ghostMesh.geometry.dispose(); ghostMesh = null; }
     renderer.domElement.style.cursor = '';
   }
 }
+
+/** braceActive's pointer move: true when it showed a brace (the cursor is on an
+ *  upright side); otherwise it hides its preview and the caller's hover runs. */
+export function braceHover(ev) {
+  const hit = pickFace(ev);
+  if (hit && swayHit(hit)) {
+    updateBracePreview(hit, ev);
+    renderer.domElement.style.cursor = 'crosshair';
+    return true;
+  }
+  if (hit && (slipOff(hit, false) || braceGrace())) {
+    drawCursor.position.copy(hit.point);   // still fading in its grace: keep following
+    return false;
+  }
+  braceAway();   // off the part, or on it with no brace shown: the dot goes too
+  return false;
+}
+
+/** The pointer left the part (a gap, the background) or is over the rotate rings
+ *  without dragging: the same grace as slipOff, then the preview and its dot go. */
+export function braceAway() {
+  braceQueued = null;
+  if (!braceShown && !braceGrace()) {
+    // the crosshair too, even with the dot already gone (a build landing hides it)
+    drawCursor.visible = false;
+    renderer.domElement.style.cursor = '';
+    return;
+  }
+  braceShown = null;
+  hideBrace(true, () => { drawCursor.visible = false; renderer.domElement.style.cursor = ''; });
+}
+
+/** Fade braceActive's ghost and tip and hide its cursor (an orbit or a ring drag
+ *  has the pointer). */
+export function dropBracePreview() {
+  braceQueued = null;
+  braceShown = null;
+  hideBrace(false);
+  drawCursor.visible = false;
+  renderer.domElement.style.cursor = '';
+}
+
+/** braceActive's click: select a support placed by hand, or stand a brace on an
+ *  upright side; true when it did. Anywhere else is left to the caller (an orbit,
+ *  the rings). */
+export function braceClick(e) {
+  const sup = pickSupport(e);
+  if (sup) { selectWall(sup); return true; }
+  const hit = pickFace(e);
+  if (!hit || !swayHit(hit)) return false;
+  if (selectedWall) { selectedWall = null; syncSelection(); }
+  placeSway(hit);
+  return true;
+}
+
+/** With Sway braces on, a click on an UPRIGHT side (no wall half-drawn) stands a brace. */
+const swayHit = (hit) => !drawStart && el('sway').checked && faceIsUpright(topology, rotM3.elements, hit.faceIndex);
 
 /** A click: select a placed support, stand a sway brace, or set / commit a wall end. */
 export function drawClick(e) {
@@ -421,12 +617,12 @@ export function drawClick(e) {
   if (selectedWall) { selectedWall = null; syncSelection(); }
   // With Sway braces on, a single click on an UPRIGHT side stands a brace there;
   // a click on anything else still starts a two-point wall as before.
-  if (!drawStart && el('sway').checked
-      && faceIsUpright(topology, rotM3.elements, hit.faceIndex)) {
+  if (swayHit(hit)) {
     placeSway(hit);
     return;
   }
   if (!drawStart) {
+    dropGhost();   // a brace still fading in its grace is not what this click starts
     drawStart = part.worldToLocal(hit.point.clone());
     drawMsg = '';
     updatePreview(hit.point);

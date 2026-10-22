@@ -88,6 +88,9 @@ function onThePart(line, tris) {
  * BAND_STEP along and across -- at the stations alone, a pin 0.5 mm thick slipped
  * between them -- through prop.js's gridded surfaceZsAt (a mini has ~1M faces). */
 const BAND_STEP = 0.25;
+// mm a mixed run's squat stem is narrowed on each side where it runs inside the full
+// wall's stem: clear of its faces, far under what a slicer resolves
+const SQUAT_INSET = 0.01;
 function bandHitsPart(line, tris, w, z0, z1) {
   for (let i = 0; i + 1 < line.length; i++) {
     const p = line[i], q = line[i + 1];
@@ -347,7 +350,7 @@ function squatWall(topPA, line, tris, zBed, plateOnly = false) {
     if (tall[i] && !tall[i - 1] && !tall[i + 1]) tall[i] = false;
   }
   const t = [];
-  let i = 0;
+  let i = 0, squats = 0;
   while (i < line.length) {
     let j = i;
     while (j + 1 < line.length && tall[j + 1] === tall[i]) j++;
@@ -357,8 +360,15 @@ function squatWall(topPA, line, tris, zBed, plateOnly = false) {
       // a squat run reaches TWO stations into each tall neighbour: the tall sweep ends at
       // its own first/last station, so one would only meet it face to face -- the pieces
       // must overlap, never sit flush (Fusion's weld). sweepSquat takes any h >= 0.6.
-      const seg = line.slice(Math.max(0, i - 2), Math.min(line.length, j + 3));
-      if (seg.length < 2 || !sweepSquat(seg, zBed, t)) return null;
+      // On those shared stations the squat stem has the full wall's section, so it is
+      // inset a hair to run inside it rather than on its faces (local issue 057); every
+      // other squat run twice as far, since across a tall run of 2-3 stations the squat
+      // runs either side reach into each other too.
+      const from = Math.max(0, i - 2);
+      const seg = line.slice(from, Math.min(line.length, j + 3));
+      const inn = SQUAT_INSET * (1 + squats++ % 2);
+      const inset = seg.map((_, k) => (tall[from + k] ? inn : 0));
+      if (seg.length < 2 || !sweepSquat(seg, zBed, t, inset)) return null;
     }
     i = j + 1;
   }

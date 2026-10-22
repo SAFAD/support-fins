@@ -18,8 +18,8 @@
  * 3D view leaves it open (Lay a face flat and Section are used there); Esc folds it
  * and hands focus back to its badge. `onFold` runs when a popover folds, for a mode
  * armed from inside it that must not stay armed out of sight (Lay a face flat).
- * The bar shows once a part is loaded (showToolbar, from part.js); nothing unloads
- * a part, so it is never hidden again.
+ * The bar shows while a part is loaded (showToolbar, from part.js) and hides again
+ * when Remove model takes it off, folding any open popover.
  *
  * It sits bottom-left, at the window's edge -- or just right of the stats card when
  * a short window has scrolled the card down beside it.
@@ -88,6 +88,9 @@ export function addBadge(id, { pop, isOn, setOn, onFold } = {}) {
   badges.set(id, b);
   if (pop) b.btn.setAttribute('aria-controls', pop);
   b.btn.addEventListener('click', () => {
+    // a tool with nothing to fold out (Move) just turns on and off, any open
+    // popover left as it is
+    if (setOn && !b.pop) { setOn(!isOn()); render(); return; }
     if (!setOn) openId = openId === id ? null : id;
     else if (!isOn()) { setOn(true); openId = isOn() ? id : null; }
     else if (openId !== id) openId = id;
@@ -112,5 +115,6 @@ addEventListener('keydown', (e) => {
 /** Show the bar (a part is loaded) or hide it. */
 export function showToolbar(v) {
   el('viewbar').hidden = !v;
+  if (!v && openId) { openId = null; render(); }
   place();
 }

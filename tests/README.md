@@ -234,6 +234,18 @@ use it; the site parses with three.js's `STLLoader`):
   so left stays the picking button, and bind the packages' own buttons;
 - an unknown remembered key falls back to Default.
 
+**`viewpresets.test.js`** -- the View popover's camera views (`web/ui/viewpresets.js`, #350):
+- Front / Back / Left / Right / Top / Bottom each put the camera on its own side of
+  the orbit target, at the distance it was (the zoom and the spot being drawn at stay);
+- Top and Bottom lean a hair toward the front, so OrbitControls keeps a heading
+  (straight down its up axis it has none);
+- the glide between views swings round the target at the same distance (Front to
+  Back in a straight line would run through it);
+- every view has a label and a tooltip.
+- the **view cube**'s faces read upright from outside (and its middle cells are the
+  buttons' views); its 3x3 cells give 26 distinct views -- each corner on 3 faces,
+  each edge on 2; a click straight up or down leans to the front like Top/Bottom.
+
 **`step.test.js`** -- STEP import through the real vendored OpenCascade WASM (the
 same `stepObjects()` the app's worker output goes through):
 - a STEP is recognised by its **content** (the `ISO-10303-21;` magic), not its name;

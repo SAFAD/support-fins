@@ -58,7 +58,8 @@ with pins:
 | | value | why |
 |---|---|---|
 | pin width `pinW` | 0.4 mm square | a resin contact tip's 0.3–0.6, inside the 0.6 wall tip |
-| pin depth `pinDepth` | 0.3 mm (field 0.05–1) | how far into the part; halved down to ¼ where the part is thinner, else no pin |
+| pin tip `pinTipW` | 0.25 mm square | narrows from `pinW` across the gap, so it snaps at the part's surface |
+| pin depth `pinDepth` | 0.1 mm (field 0.05–1) | how far into the part (resin presets: 0–0.2); halved down to ¼ where the part is thinner, else no pin |
 | spacing | the Tine grip slider's step | 2 mm dense … 5 mm light, ≥ 3 per wall |
 | bottom | `tineOverlap` (0.3) inside the wall top | so they union |
 | foot gap | 0 (welded) | a wall on the part would otherwise start as a floating island |
@@ -150,7 +151,12 @@ checked inside the part. **Not tested on a resin printer.**
   (1.2 mm struts at 1.5:1, ~56°). Diamonds at the edge are clipped to the outline; a
   roof that clip leaves flatter than 45° is cut back to exactly 45° (a gable under a
   level top), so every hole roof is ≥ 45° -- the same rule the tool's overhang check
-  applies to the part. Walls too short for a 3 mm hole stay solid. The
+  applies to the part. **Honeycomb** fills the same outline the same way with
+  hexagons stood on a corner (6 mm pitch, 1.2 mm struts both ways: vertical between
+  neighbours in a row, diagonal between rows), stretched upright until their roofs
+  rise 1.4:1 (~55deg); a regular hexagon's 30deg roofs are a print question
+  (`prototype/calibration/cutout/`, the honeycomb gate). Under the coupon's ledge its
+  walls weigh about 10 % less than Lattice's. Walls too short for a 3 mm hole stay solid. The
   tined side fins (the Onshape port's; the web tool no longer builds them) are never
   cut -- their tines anchor across the whole blade.
 
@@ -348,10 +354,15 @@ Not printed yet. Off by default; Auto and Full only, site only (plugins later).
 | bending region | any of its downhill walls bends > **10°** | not print-tested; straight downhill walls read 0° on the real organic parts, real bends 10–60° (spiral ramp 56–60°, lamp shade X30 and bust 10–23°) |
 | tried, ticked | downhill walls are tried under **every** region, not only those the walls above left bare (`RASTER_SKIP_HELD`) | a curve under a well-held region was never built (spiral X30, bunny X30) |
 | race, ticked | a bending region **always** swaps to its downhill walls if they hold anything, at any weight; the normal walls that hold what they miss (≥ `RACE_ABS`) or grip lower stay beside them (`keepers`), and the grip rule does not veto the swap. Other regions race as unticked | the user asked for the curve (#25: "only worked once"); measured over 8 real organic parts, holding-as-much let 4 bending walls through, forcing ~12. Bare overhang stays red in the readout |
-| whole build | ticked, no whole-build judge: not the downhill one, not one against the unticked build | the user's choice; over 16 real cases it never changed the result anyway |
+| whole build | ticked, in Auto no whole-build judge: not the downhill one, not one against the unticked build (Full: next row) | the user's choice; over 16 real cases it never changed the result anyway |
 | Auto fill, ticked | the fill pass (`fins/fill.js`, rows off) runs under the regions a curve won, there only; the readout counts it apart from Full coverage's (`curvedFill`) | forced curves left overhang the straight walls held (spiral X30 911 → 803 mm², bear X0 211 → 162); with the fill every measured case holds ≥ unticked (torus X30 471 → 835). Ticked Auto takes up to ~3.5 s longer on a big part |
 | known gaps, ticked | the downhill whole-build judge is skipped for non-bending regions too; the fill doesn't look at a neighbouring region a dropped straight wall also held; a forced swap may raise the lowest tine (bust Y60 17.90 → 18.16 mm, held 1557 → 3239 mm²) | review 2026-10-17: the judge rejected nothing on 9 stress models × 6 tilts + 4 real parts, and neighbour loss measured 0 on 6 parts; revisit on a print or a report |
-| Full | can cost plastic for no gain: the fill pass may already hold what a curve holds (torus, held equal, +12% plastic) | the box is the user's trade |
+| Full, ticked | the unticked Full build is built too; the curved one stays only if it holds ≥ **99%** as much (`CURVED.fullSlack`), its lowest tine rises ≤ `gripRise` and no wedge is lost (`judgeDownhill`'s test); the slack only when the ticked build has a bending wall (all straight: the strict test). Otherwise the straight build, and the readout says so (`curvedDropped`). Can still cost plastic for no gain (torus, held equal, +12% plastic) | the curves can break up the fill's rows (coffee bean on its side: held −2 to −5%); a strict test dropped the spiral (−0.8%) and bust X30 (−0.3%) too. Ticked Full builds up to ~2.5x as long (the curved build, plus the unticked one with its own downhill judge) |
+| tracing surface, ticked | `prop/trace.js`: each region grown across adjacent down-facing faces (normal z below **−0.34**, `TRACE.grow`: the slivers and steep strips between islands) up to **6 mm** in plan from the red it grew from (`TRACE.bridge`, half `maxUnsupportedSpan`); regions whose growth meets trace as one surface and race as one (their leader's turn: every member's walls against the group's); a member counts as served only where the group's walls reach its own faces; a group's wall within a foot + 1 mm in plan of a wall an earlier group swapped in is dropped (each group traces alone: stacked surfaces met 0.15–0.43 mm apart on the bean on its side; a shared join hash instead cut the lamp shade X30's curves 20 → 15 and held below unticked) | a rippled surface near the threshold breaks its red into islands, and a line traced on one stopped at its edge: coffee bean tilted back (X-45) 0 curves → 8, held 1305 → 2674 mm² (Auto) |
+| slope, ticked | read over **2 mm** (`TRACE.h`; unticked 0.5) | ridges under it don't steer the line |
+| coverage, ticked | each line trimmed to the stations within **6 mm** of red (slivers count); red farther than that from every line seeds a line of its own, highest first, up to **60** lines per surface (`DOWNHILL.maxLines`) | the curves cover the overhang and the fill takes scraps: bean on its side (X90) 10 → 30 curves, Auto fill 40 → 21 walls (still at its try cap), held 6376 → 7377 mm²; Full now keeps them (7154 → 7340) |
+| two races, ticked | the downhill race runs as unticked first; then a second race over the grown surfaces, where a group whose walls bend always swaps and every other group keeps what the first left | `buildProps` changes nothing where no wall bends (ticked Auto still skips the downhill judge: known gaps, above) |
+| limits | a red band shallower than `minSpan` (**7 mm**) downhill gets stubs, not curves; one bending line swaps its whole group, so on a part whose red joins into one surface the forced swap reaches most of it (`keepers` and Auto's fill stand behind it; in Full the 1% judge) | bean X-30: 39 lines traced, 26 stubs, 1 curve. Ticked Auto can hold less than unticked: lamp shade X30 25382 → 24842 mm² (−2.1%, the fill at its cap; Full keeps the straight build there). Kept forced (Matthew, 2026-10-17); every other measured case holds at least as much |
 | switch | `opts.curvedWalls === true`; anything else is the race above, byte for byte | |
 
 ## Naming

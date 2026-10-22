@@ -30,17 +30,22 @@ import './ui/plugins.js';
 import './ui/calibrate.js';
 import './ui/topbar.js';
 import './ui/navigation.js';
+import './ui/camviews.js';
+import { syncViewCube } from './ui/viewcube.js';
+import './ui/scale.js';
 import { updateReadout } from './ui/readout.js';
 import {
   drawnWalls, drawnTris, drawStart, selectedWall, drawActive, sizeMarkers, clearPreview,
-  selectWall, removeSelected, drawHover, drawClick,
+  selectWall, removeSelected, drawHover, drawClick, braceActive, braceHover, braceClick, dropBracePreview,
 } from './ui/walls.js';
 import { finTris, padTris, lastBuilt } from './ui/finbuild.js';
 import { initSettings } from './ui/settings.js';
 import './ui/search.js';
+import './ui/tips.js';
 import { part, topology, rotM3, lastResult, threshold } from './ui/part.js';
-import { gizmo, hoverFace, layActive, cancelLay, layHover, layClick } from './ui/pose.js';
+import { gizmo, hoverFace, layActive, cancelLay, layHover, layClick, ringPressTurned, clearRingPress } from './ui/pose.js';
 import { planeBusy, renderGhost } from './ui/section.js';
+import { moveActive } from './ui/move.js';
 
 // ------------------------------------------------------------------ keyboard
 
@@ -71,6 +76,12 @@ addEventListener('keydown', (e) => {
 let pressAt = null;
 let pressOnPlane = false;   // the press landed on the section plane's handle
 renderer.domElement.addEventListener('pointermove', (ev) => {
+  // Move (ui/move.js) owns the pointer: no pick lights up under a drag
+  if (moveActive()) {
+    hoverFace.visible = false;
+    clearFinHover();
+    return;
+  }
   // The section plane's handle is under the pointer or being dragged: it owns the
   // pointer, and no pick should light up through it.
   if (planeBusy()) {
@@ -94,6 +105,14 @@ renderer.domElement.addEventListener('pointermove', (ev) => {
     drawHover(ev);
     return;
   }
+  // Auto / Full with Sway braces on: an upright side previews the brace a click stands.
+  // An orbit or ring drag owns the pointer: the preview goes, not left behind. Over
+  // the rings without a drag it still shows: a drag there turns the part, a click
+  // stands the brace.
+  if (!layActive() && braceActive()) {
+    if (gizmo.dragging || pressAt) dropBracePreview();
+    else if (braceHover(ev)) { hoverFace.visible = false; return; }
+  }
   // Face-lay hover ONLY while armed: otherwise a highlighted, clickable-looking
   // face invites the stray click that silently re-lays the part. Off by default,
   // clicks just orbit.
@@ -111,6 +130,7 @@ renderer.domElement.addEventListener('pointerleave', () => {
 
 renderer.domElement.addEventListener('pointerdown', (e) => {
   pressAt = { x: e.clientX, y: e.clientY };
+  clearRingPress();   // the rings' own press handler ran first; a turn is only known on release
   // Read at the press: the plane's TransformControls listens first, so it has set
   // its axis by now -- and on release it clears it before this module's pointerup.
   pressOnPlane = planeBusy();
@@ -121,8 +141,9 @@ renderer.domElement.addEventListener('pointerup', (e) => {
   pressAt = null;
   if (!from || !part || !topology) return;
 
-  // a drag is an orbit, not a pick
-  if (Math.hypot(e.clientX - from.x, e.clientY - from.y) > 4) return;
+  // a drag is an orbit, not a pick; with Move on, nothing is picked (a click on a
+  // parked model still edits it: ui/plates.js)
+  if (Math.hypot(e.clientX - from.x, e.clientY - from.y) > 4 || moveActive()) return;
   // a click on the section plane's handle is the handle's, not a pick
   if (pressOnPlane) return;
 
@@ -149,12 +170,16 @@ renderer.domElement.addEventListener('pointerup', (e) => {
     return;
   }
 
+  // Auto / Full with Sway braces on: a click on an upright side (or a brace placed
+  // by hand) is the brace's, even over the rotate rings -- unless the press turned
+  // the part (a ring snaps 5 deg within the 4 px a click allows): that was a turn.
+  if (!layActive() && braceActive() && !ringPressTurned() && braceClick(e)) return;
+
   if (gizmo.dragging || gizmo.axis) return;
 
   // Lay a face flat -- ONLY when armed via the button. Off by default so a stray
   // viewport click orbits instead of silently discarding a careful rotation.
-  if (!layActive()) return;
-  layClick(e);
+  if (layActive()) layClick(e);
 });
 
 // Cancel an armed mode / wall-in-progress: Escape, or a right-click in the viewport.
@@ -209,6 +234,7 @@ function tick(now) {
     camPos.copy(camera.position);
     camQuat.copy(camera.quaternion);
     requestRender(250);
+    syncViewCube();
   }
   sizeMarkers();
   renderer.render(scene, camera);

@@ -216,6 +216,7 @@ export const PROP = {
   // spaced wall-length / n. 0 = off (the default; spacing rules decide). Calibration
   // knob (tunables.tinesPerWall), the tine coupon's how-few-still-hold row.
   tinesPerWall: 0,
+  tineContactOffset: -0.01, // mm along the bite heading: positive gap, negative overlap
   tineReachTip: 0,   // added to the reach past a contact tip wider than 0.4's (nozzle.js)
   tineReach: 0.5,    // how far out a tine looks for the part, horizontally: a tine is
                      // placed only if solid lies at this reach (the slope gate is
@@ -260,6 +261,9 @@ export const PROP = {
   // across the gap and pinDepth into the underside. Untested on a resin printer.
   tineDir: 'horizontal',
   pinW: 0.4,           // pin width: a resin contact tip's 0.3-0.6 mm, inside the 0.6 wall tip
-  pinDepth: 0.3,       // how far a pin sinks into the part (the user's "Pin depth")
+  pinTipW: 0.25,       // where it meets the part: a light-to-medium resin tip (0.15-0.5)
+  pinDepth: 0.1,       // how far a pin sinks into the part (the user's "Pin depth"):
+                       // resin presets sink a tip 0-0.2 mm (Lychee 0, Titancraft 0.07);
+                       // deeper scars more and snaps harder (#309, front walls needed a tool)
   pinDepthMax: 1.0,    // the field's ceiling
 };

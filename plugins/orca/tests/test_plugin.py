@@ -82,26 +82,30 @@ def _weld(tris):
     return V, inv.reshape(-1, 3)
 
 
-def run_case(model, trafo, layer_height=0.2):
+def run_case(model, trafo, layer_height=0.2, config=None):
     part = trimesh.load(MODELS / f"{model}.stl")
     po = fake_orca.FakePrintObject(part, trafo, layer_height=layer_height)
     # the fins the plugin will compute, in the same centred frame as po.posed
     soup = SF.posed_part_soup(po)
     soup = soup - np.array([po.center_mm[0], po.center_mm[1], soup[:, :, 2].min()])
-    fins, stats = SF.compute_fins(soup, layer_height, dict(SF._DEFAULTS))
+    fins, stats = SF.compute_fins(soup, layer_height, {**SF._DEFAULTS, **(config or {})})
     want = expected_islands(po, fins)
     cap = SF.SupportFinsSlicing()
+    cap._config = json.dumps(config or {})
     res = cap.execute(fake_orca.Ctx(po))
     return po, res, want, stats
 
 
-@pytest.mark.parametrize("model,deg,shift,scale", [
-    ("cube", 45, (137.25, 88.5, 12.0), 1.0),     # parked off-centre, lifted
-    ("wedge", 45, (40.0, 200.0, 0.0), 1.0),
-    ("ramp", 45, (-30.0, 5.0, 0.0), 1.004),      # with XY/Z shrinkage compensation
+@pytest.mark.parametrize("model,deg,shift,scale,config", [
+    ("cube", 45, (137.25, 88.5, 12.0), 1.0, None),     # parked off-centre, lifted
+    ("wedge", 45, (40.0, 200.0, 0.0), 1.0, None),
+    ("ramp", 45, (-30.0, 5.0, 0.0), 1.004, None),      # with XY/Z shrinkage compensation
+    # Full coverage: its mixed squat/full walls once met face on face, and the oracle
+    # (trimesh reads topology) lost their section on the low layers (local issue 057)
+    ("lbracket", 40, (20.0, -15.0, 0.0), 1.0, {"mode": "full"}),
 ])
-def test_fins_land_exactly_where_a_finned_stl_would(model, deg, shift, scale):
-    po, res, want, stats = run_case(model, rot_x(deg, shift, scale))
+def test_fins_land_exactly_where_a_finned_stl_would(model, deg, shift, scale, config):
+    po, res, want, stats = run_case(model, rot_x(deg, shift, scale), config=config)
     assert res.status is fake_orca.PluginResult.Success, res
     assert stats["braces"] >= 1
     worst, total_fin = 0.0, 0.0
@@ -206,3 +210,80 @@ def test_mirrored_part_gets_the_same_fins_as_its_twin():
     _, s_ref = SF.compute_fins(SF.posed_part_soup(ref), 0.2, dict(SF._DEFAULTS))
     assert s_ref["braces"] >= 1
     assert (s_mir["braces"], s_mir["tines"]) == (s_ref["braces"], s_ref["tines"])
+
+
+# ------------------------------------------------------------------ config
+def _fin_area(config, model="lbracket", deg=40):
+    po = fake_orca.FakePrintObject(trimesh.load(MODELS / f"{model}.stl"), rot_x(deg))
+    before = sum(L.islands().area for L in po.layers())
+    cap = SF.SupportFinsSlicing()
+    cap._config = json.dumps(config)
+    res = cap.execute(fake_orca.Ctx(po))
+    return sum(L.islands().area for L in po.layers()) - before, res
+
+
+def test_every_engine_setting_is_a_config_key():
+    # every options.json setting but Orca's own layer height is taken, as Orca stores
+    # the config (a JSON string); written out at its default it builds what leaving it
+    # out builds
+    ctx = SF._engine_ctx()
+    every = {o["key"]: o["default"] for o in SF.host_schema(ctx)["options"]
+             if o.get("hostSupplied") != "slicer"}
+    assert {"mode", "gap", "threshold", "padStyle", "cutout", "sway.on"} <= set(every)
+    assert _fin_area(json.loads(json.dumps(every)))[0] == _fin_area({})[0] > 0
+
+
+def test_the_default_config_is_the_plugins_own_keys_only():
+    # Orca's Restore defaults writes this back as the stored config: every setting in
+    # it would pin those users to today's defaults when the site's change
+    assert SF.SupportFinsSlicing().get_default_config() == {"enabled": True, "apply_to": "no-supports"}
+
+
+def test_hand_written_values_read_as_before():
+    ctx = SF._engine_ctx()
+    want = SF.engine_options(ctx, {"coverage": 0.5, "tines": False}, 0.2)
+    for cfg in ({"coverage": "0.5", "tines": "false"}, {"coverage": 0.5, "tines": 0}, {"coverage": 0.5, "tines": "0"}):
+        assert SF.engine_options(ctx, cfg, 0.2) == want, cfg
+    assert SF.engine_options(ctx, {"tines": 1}, 0.2)["tines"] is True
+    # a config that says it's off is off, string or not
+    po = fake_orca.FakePrintObject(trimesh.load(MODELS / "cube.stl"), rot_x(45))
+    cap = SF.SupportFinsSlicing()
+    cap._config = json.dumps({"enabled": "false"})
+    assert "disabled" in cap.execute(fake_orca.Ctx(po)).message
+
+
+def test_an_old_saved_config_builds_the_fins_it_always_did():
+    # main's compute_fins sent exactly these options for the old default config
+    old = {"enabled": True, "apply_to": "no-supports", "coverage": 0.5, "tines": True,
+           "tine_density": 0.0, "bed_pad": True}
+    po = fake_orca.FakePrintObject(trimesh.load(MODELS / "lbracket.stl"), rot_x(40))
+    soup = SF.posed_part_soup(po)
+    then = SF.host_compute(SF._engine_ctx(), soup, {"mode": "auto", "bedPad": True, "tines": True,
+                                                    "tineDensity": 0.0, "coverage": 0.5, "layerHeight": 0.2})[0]
+    now = SF.compute_fins(soup, 0.2, old)[0]
+    assert then.shape == now.shape and np.array_equal(then, now)
+
+
+def test_older_config_names_still_work():
+    ctx = SF._engine_ctx()
+    old = {"enabled": True, "apply_to": "all", "coverage": 0.25, "tines": True,
+           "tine_density": 0.4, "bed_pad": False}
+    assert SF.engine_options(ctx, old, 0.16) == SF.engine_options(
+        ctx, {"coverage": 0.25, "tines": True, "tineDensity": 0.4, "padStyle": "off"}, 0.16)
+    # bed_pad true leaves the pad style alone
+    assert SF.engine_options(ctx, {"bed_pad": True, "padStyle": "sure"}, 0.2)["padStyle"] == "sure"
+
+
+def test_full_coverage_from_the_config_adds_walls():
+    auto, _ = _fin_area({})
+    full, res = _fin_area({"mode": "full"})
+    assert full > auto * 1.2, f"Full {full:.0f} vs Auto {auto:.0f} mm2 of fin cross-section"
+    assert "walls" in res.message
+
+
+def test_a_bad_key_or_value_fails_the_slice_by_name():
+    for config, want in (({"sparkle": 1}, "sparkle"), ({"mode": "draw"}, "mode"),
+                         ({"gap": 3}, "gap"), ({"layerHeight": 0.1}, "Orca's own layer height")):
+        _, res = _fin_area(config)
+        assert res.status is fake_orca.PluginResult.RecoverableError and want in res.message, res.message
+        assert "ValueError" not in res.message, res.message

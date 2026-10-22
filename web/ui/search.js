@@ -34,6 +34,8 @@ const GATES = [
   // the brace tine fields also hide with Tines off (settings.js syncSway)
   ['#sway-from-fld, #sway-spacing-fld', () => el(el('sway').checked ? 'tines' : 'sway').closest('label')],
   ['#sway-depth-fld, #full-brace-depth-fld', () => el('sway').closest('label')],
+  ['#tall-ribs-height-fld', () => el('tall-ribs').closest('label')],
+  ['#sway-cross-height-fld', () => el(el('sway').checked ? 'tall-ribs' : 'sway').closest('label')],
   ['#coverage-fld, #augment-toggle, #remove-fins-toggle', () => el('fin-mode-fld')],
   ['#restore-fins', () => el('remove-fins-toggle')],   // shows once a fin is removed
   ['#draw-clear', () => (el('fin-mode').value === 'draw' ? null : el('fin-mode-fld'))],
@@ -57,7 +59,8 @@ function nameOf(r) {
   if (r.dataset.origText) parts.push(r.dataset.origText);
   return fold(parts.join(' '));
 }
-const tipOf = (r) => fold(`${r.title} ${r.dataset.origTitle ?? ''}`);
+// a title parked by ui/tips.js while its card is up is still its title
+const tipOf = (r) => fold(`${r.title || r.dataset.tipTitle || ''} ${r.dataset.origTitle ?? ''}`);
 const shown = (r) => !r.closest('[hidden]');
 
 let saved = null;   // each section's open state from before the search
